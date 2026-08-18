@@ -1,0 +1,25 @@
+from django.db import models
+from users.models import User
+
+class Patient(models.Model):
+    patient_id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, db_column='user_id')
+    patient_name = models.CharField(max_length=255, null=True, blank=True)
+    first_name = models.CharField(max_length=100, null=True, blank=True)
+    middle_name = models.CharField(max_length=100, null=True, blank=True)
+    last_name = models.CharField(max_length=100, null=True, blank=True)
+    age = models.IntegerField(null=True, blank=True)
+    weight = models.IntegerField(null=True, blank=True)
+    gender = models.CharField(max_length=10, null=True, blank=True)
+    address = models.TextField(null=True, blank=True)
+    alternate_mobile_number = models.CharField(max_length=20, null=True, blank=True)
+    email = models.EmailField(null=True, blank=True)
+    patient_file_name = models.CharField(max_length=255, null=True, blank=True)
+    patient_file_extension = models.CharField(max_length=10, null=True, blank=True)
+    pin = models.CharField(max_length=50, null=True, blank=True)
+    ref_no = models.CharField(max_length=50, null=True, blank=True)
+    height = models.FloatField(null=True, blank=True)
+    bmi = models.FloatField(null=True, blank=True)
+    bp = models.CharField(max_length=50, null=True, blank=True)
+    comment = models.TextField(null=True, blank=True)
+    added_date = models.DateTimeField(auto_now_add=True, null=True, blank=True)

@@ -59,6 +59,29 @@ class BlockBrowserAPIAccessMiddleware:
                 # Admins have access to everything
                 pass
             
+            elif user_type == 'technician':
+                # Allowed paths for Technician
+                allowed_paths = [
+                    '/api/booking',
+                    '/api/locations',
+                    '/api/service-groups',
+                    '/api/services'
+                ]
+                
+                is_allowed = False
+                for path in allowed_paths:
+                    if request.path.startswith(path):
+                        # For master tables, technicians can only read (GET)
+                        if path in ['/api/locations', '/api/service-groups', '/api/services']:
+                            if request.method == 'GET':
+                                is_allowed = True
+                        else:
+                            is_allowed = True
+                        break
+                
+                if not is_allowed:
+                    return HttpResponseForbidden("You do not have permission to access this resource.")
+            
             else:
                 return HttpResponseForbidden("Unknown user role.")
 
