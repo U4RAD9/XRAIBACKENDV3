@@ -10,7 +10,7 @@ import datetime
 import razorpay # type: ignore
 from django.conf import settings
 
-from .models import SlotBookingMaster, SlotBookingDetails
+from .models import SlotBookingMaster, SlotBookingDetails, SlotBookingFile
 from .serializers import SlotBookingMasterSerializer, SlotBookingDetailsSerializer
 
 class SlotBookingMasterViewSet(viewsets.ModelViewSet):
@@ -34,6 +34,19 @@ def get_price(request):
         price = 1000
     elif group_id == '2':
         price = 2500
+
+    try:
+        if service_id:
+            from price_rate_master.models import PriceRateMaster, PriceRateMasterLocation
+            master = PriceRateMaster.objects.filter(service_id=service_id, is_active=True).first()
+            if master:
+                price = master.price
+                if location_id:
+                    loc_price = PriceRateMasterLocation.objects.filter(price_rate_master=master, location_id=location_id).first()
+                    if loc_price:
+                        price = loc_price.custom_price
+    except Exception as e:
+        print(f"Error fetching price: {e}")
 
     return Response({"Price": price}, status=status.HTTP_200_OK)
 
@@ -112,15 +125,36 @@ def get_patient_bookings(request):
     if not user_id:
         return Response({"Success": False, "Message": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
     
-    bookings = SlotBookingMaster.objects.filter(user_id=user_id).order_by('-created_date')
+    from django.db.models import Q
+    # Filter bookings where service_provider is NOT NULL and belongs to this user either as creator or patient
+    bookings = SlotBookingMaster.objects.filter(
+        Q(user_id=user_id) | Q(patient__user_id=user_id),
+        service_provider__isnull=False
+    ).order_by('-created_date')
     data = []
     for b in bookings:
+        details = SlotBookingDetails.objects.filter(slot_booking=b)
+        services = [d.service.service_name for d in details if d.service and d.service.service_name]
+        services_str = ", ".join(services) if services else "N/A"
+        
+        # Check if reports exist and get files
+        report_files = SlotBookingFile.objects.filter(slot_booking_detail__in=details, file_type='Report')
+        reports = [{"filename": r.file_name, "service": r.slot_booking_detail.service.service_name if r.slot_booking_detail.service else "Unknown"} for r in report_files]
+        report_exists = len(reports) > 0
+        
         data.append({
             "BookingID": b.slot_booking_id,
-            "Date": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else b.created_date.strftime('%Y-%m-%d'),
+            "patientName": b.patient.patient_name if b.patient and b.patient.patient_name else (b.patient_name or "N/A"),
+            "services": services_str,
+            "Date": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else "N/A"),
+            "slot": b.slot.slot_name if b.slot and b.slot.slot_name else "N/A",
+            "location": b.location.location_name if b.location and b.location.location_name else "N/A",
+            "technician": b.service_provider.full_name if b.service_provider and b.service_provider.full_name else (b.service_provider.user_name if b.service_provider else "N/A"),
             "Amount": str(b.net_amount) if b.net_amount else "0",
+            "paymentStatus": b.payment_status or "N/A",
             "Status": b.status,
-            "ServiceGroupName": b.service_group.service_group_name if b.service_group else "General Service"
+            "hasReport": report_exists,
+            "reports": reports
         })
     return Response({"Success": True, "Bookings": data}, status=status.HTTP_200_OK)
 
@@ -147,11 +181,14 @@ def get_last_booking(request):
         })
         
     data = {
+        "slot_booking_id": last_booking.slot_booking_id,
         "location_id": last_booking.location.location_id if last_booking.location else None,
         "slot_id": last_booking.slot.slot_id if last_booking.slot else None,
         "date": last_booking.slot_booking_datetime.strftime('%Y-%m-%d') if last_booking.slot_booking_datetime else None,
         "payment_method": last_booking.payment_method,
         "address": last_booking.address,
+        "prescription_file": last_booking.prescription_filename,
+        "image_file": last_booking.upload_or_click_photo,
         "services": services
     }
     
@@ -164,6 +201,15 @@ def get_all_bookings(request):
     status_filter = request.query_params.get('status')
     
     query = SlotBookingMaster.objects.all().order_by('-created_date')
+
+    # Partner filtering logic
+    user_info = getattr(request, 'user_info', {})
+    user_type = user_info.get('UserType', '').lower()
+    logged_in_user_id = user_info.get('UserID')
+
+    if user_type == 'partner' and logged_in_user_id:
+        query = query.filter(user_id=logged_in_user_id)
+        
     if date:
         query = query.filter(created_date__date=date)
     if status_filter and status_filter != 'All':
@@ -205,6 +251,17 @@ def get_booking_details(request, id):
         services = []
         details = SlotBookingDetails.objects.filter(slot_booking=b)
         for detail in details:
+            # Fetch related files
+            related_files = SlotBookingFile.objects.filter(slot_booking_detail=detail)
+            service_files = [f.file_name for f in related_files if f.file_type == 'Service']
+            report_files = [f.file_name for f in related_files if f.file_type == 'Report']
+            
+            # Legacy fallback if no multiple files but legacy fields exist
+            if not service_files and hasattr(detail, 'service_filename') and detail.service_filename:
+                service_files.append(detail.service_filename)
+            if not report_files and hasattr(detail, 'report_filename') and detail.report_filename:
+                report_files.append(detail.report_filename)
+
             services.append({
                 "id": detail.slot_booking_det_id,
                 "service_id": detail.service.service_id if detail.service else None,
@@ -212,8 +269,8 @@ def get_booking_details(request, id):
                 "bodyPart": detail.service.service_name if detail.service else "N/A",
                 "price": str(detail.price) if detail.price else "0",
                 "netPayable": str(detail.price) if detail.price else "0",
-                "serviceFile": detail.service_filename if hasattr(detail, 'service_filename') else None,
-                "reportFile": detail.report_filename if hasattr(detail, 'report_filename') else None
+                "serviceFiles": service_files,
+                "reportFiles": report_files
             })
             
         data = {
@@ -237,6 +294,7 @@ def get_booking_details(request, id):
                 "alternateNo": b.patient.alternate_mobile_number if b.patient and b.patient.alternate_mobile_number else "N/A"
             },
             "prescriptionFile": b.prescription_filename if hasattr(b, 'prescription_filename') else None,
+            "imageFile": b.upload_or_click_photo if hasattr(b, 'upload_or_click_photo') else None,
             "services": services
         }
         return Response({"Success": True, "Booking": data}, status=status.HTTP_200_OK)
@@ -262,14 +320,12 @@ def upload_booking_file(request, id):
         filename = fs.save(file_obj.name, file_obj)
         extension = os.path.splitext(filename)[1]
         
-        if file_type == 'Service':
-            detail.service_filename = filename
-            detail.service_extension = extension
-        elif file_type == 'Report':
-            detail.report_filename = filename
-            detail.report_extension = extension
-            
-        detail.save()
+        SlotBookingFile.objects.create(
+            slot_booking_detail=detail,
+            file_type=file_type,
+            file_name=filename,
+            file_extension=extension
+        )
         
         return Response({"Success": True, "Message": "File uploaded successfully", "filename": filename}, status=status.HTTP_200_OK)
     except SlotBookingDetails.DoesNotExist:
@@ -310,6 +366,14 @@ def get_dashboard_stats(request):
         to_date = request.query_params.get('ToDate')
         
         query = SlotBookingMaster.objects.all()
+
+        # Partner filtering logic
+        user_info = getattr(request, 'user_info', {})
+        user_type = user_info.get('UserType', '').lower()
+        logged_in_user_id = user_info.get('UserID')
+
+        if user_type == 'partner' and logged_in_user_id:
+            query = query.filter(user_id=logged_in_user_id)
         
         if from_date and to_date:
             query = query.filter(slot_booking_datetime__date__gte=from_date, slot_booking_datetime__date__lte=to_date)
@@ -344,7 +408,13 @@ def upload_prescription_file(request, id):
         filename = fs.save(file_obj.name, file_obj)
         extension = os.path.splitext(filename)[1]
         
-        booking.prescription_filename = filename
+        if booking.prescription_filename:
+            new_val = booking.prescription_filename + "," + filename
+            if len(new_val) <= 255:
+                booking.prescription_filename = new_val
+        else:
+            booking.prescription_filename = filename
+            
         booking.save()
         return Response({'Success': True, 'Message': 'Prescription uploaded successfully', 'filename': filename}, status=status.HTTP_200_OK)
     except SlotBookingMaster.DoesNotExist:
@@ -352,6 +422,26 @@ def upload_prescription_file(request, id):
     except Exception as e:
         return Response({'Success': False, 'Message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def upload_image_file(request, id):
+    try:
+        from django.core.files.storage import FileSystemStorage
+        import os
+        booking = SlotBookingMaster.objects.get(slot_booking_id=id)
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({'Success': False, 'Message': 'File missing'}, status=status.HTTP_400_BAD_REQUEST)
+        fs = FileSystemStorage()
+        filename = fs.save(file_obj.name, file_obj)
+        
+        booking.upload_or_click_photo = filename
+        booking.save()
+        return Response({'Success': True, 'Message': 'Image uploaded successfully', 'filename': filename}, status=status.HTTP_200_OK)
+    except SlotBookingMaster.DoesNotExist:
+        return Response({'Success': False, 'Message': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'Success': False, 'Message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST', 'PATCH'])
 @permission_classes([AllowAny])
@@ -400,6 +490,7 @@ def get_technician_bookings(request):
                 files_count += 1
             if d.report_filename:
                 files_count += 1
+            files_count += SlotBookingFile.objects.filter(slot_booking_detail=d).count()
                 
         data.append({
             "id": b.slot_booking_id,
@@ -426,11 +517,13 @@ def get_technician_bookings(request):
     
     return Response({"Success": True, "result": result}, status=status.HTTP_200_OK)
 
-@api_view(['POST'])
+@api_view(['POST', 'PATCH'])
 @permission_classes([AllowAny])
 def update_booking(request):
     try:
         from services.models import Service
+        from locations.models import Location
+        from slots.models import SlotMaster
         data = request.data
         booking_id = data.get('booking_id')
         if not booking_id:
@@ -450,6 +543,26 @@ def update_booking(request):
         booking.payment_method = payment_method
         booking.gross_amount = amount
         booking.net_amount = amount
+        
+        # Additional fields from form
+        if 'location_id' in data and data['location_id']:
+            booking.location = Location.objects.get(location_id=data['location_id'])
+        if 'slot_id' in data and data['slot_id']:
+            booking.slot = SlotMaster.objects.get(slot_id=data['slot_id'])
+        if 'date' in data and data['date']:
+            # Assuming slot_booking_datetime stores the date
+            from datetime import datetime
+            dt = datetime.strptime(data['date'], '%Y-%m-%d')
+            booking.slot_booking_datetime = dt
+        if 'address' in data:
+            booking.address = data['address']
+        if 'payment_status' in data:
+            booking.payment_status = data['payment_status']
+        if 'prescription_file' in data:
+            booking.prescription_filename = data['prescription_file']
+        if 'image_file' in data:
+            booking.upload_or_click_photo = data['image_file']
+            
         booking.save()
 
         if services is not None:

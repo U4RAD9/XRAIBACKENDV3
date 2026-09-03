@@ -19,7 +19,7 @@ from patients.views import PatientViewSet
 from slots.views import SlotMasterViewSet, get_slots
 from bookings.views import (SlotBookingMasterViewSet, SlotBookingDetailsViewSet,
                               get_price, save_booking, update_booking, get_patient_bookings, get_last_booking,
-                              get_all_bookings, get_booking_details, upload_booking_file, create_order, verify_payment, get_dashboard_stats, get_technician_bookings, upload_prescription_file, update_booking_status, update_payment_status)
+                              get_all_bookings, get_booking_details, upload_booking_file, create_order, verify_payment, get_dashboard_stats, get_technician_bookings, upload_prescription_file, upload_image_file, update_booking_status, update_payment_status)
 
 router = DefaultRouter()
 
@@ -62,6 +62,7 @@ urlpatterns = [
     path('api/booking/details/<int:id>', get_booking_details, name='get_booking_details'),
     path('api/booking/upload_file/<int:id>', upload_booking_file, name='upload_booking_file'),
     path('api/booking/upload_prescription/<int:id>', upload_prescription_file, name='upload_prescription_file'),
+    path('api/booking/upload_image/<int:id>', upload_image_file, name='upload_image_file'),
     path('api/booking/update_booking_status/<int:id>', update_booking_status, name='update_booking_status'),
     path('api/booking/update_payment_status/<int:id>', update_payment_status, name='update_payment_status'),
     path('api/booking/all_bookings', get_all_bookings, name='all_bookings'),

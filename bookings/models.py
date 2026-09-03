@@ -72,3 +72,11 @@ class SlotBookingDetails(models.Model):
     service_extension = models.CharField(max_length=10, null=True, blank=True)
     report_filename = models.CharField(max_length=255, null=True, blank=True)
     report_extension = models.CharField(max_length=10, null=True, blank=True)
+
+class SlotBookingFile(models.Model):
+    id = models.AutoField(primary_key=True)
+    slot_booking_detail = models.ForeignKey(SlotBookingDetails, on_delete=models.CASCADE, related_name='files')
+    file_type = models.CharField(max_length=20) # 'Service' or 'Report'
+    file_name = models.CharField(max_length=255)
+    file_extension = models.CharField(max_length=10)
+    uploaded_on = models.DateTimeField(auto_now_add=True)

@@ -38,7 +38,8 @@ class BlockBrowserAPIAccessMiddleware:
                     '/api/payment',
                     '/api/locations',
                     '/api/service-groups',
-                    '/api/services'
+                    '/api/services',
+                    '/api/patients'
                 ]
                 
                 is_allowed = False
@@ -72,6 +73,31 @@ class BlockBrowserAPIAccessMiddleware:
                 for path in allowed_paths:
                     if request.path.startswith(path):
                         # For master tables, technicians can only read (GET)
+                        if path in ['/api/locations', '/api/service-groups', '/api/services']:
+                            if request.method == 'GET':
+                                is_allowed = True
+                        else:
+                            is_allowed = True
+                        break
+                
+                if not is_allowed:
+                    return HttpResponseForbidden("You do not have permission to access this resource.")
+            
+            elif user_type == 'partner':
+                # Allowed paths for Partner
+                allowed_paths = [
+                    '/api/booking',
+                    '/api/payment',
+                    '/api/locations',
+                    '/api/service-groups',
+                    '/api/services',
+                    '/api/patients'
+                ]
+                
+                is_allowed = False
+                for path in allowed_paths:
+                    if request.path.startswith(path):
+                        # For master tables, partners can only read (GET)
                         if path in ['/api/locations', '/api/service-groups', '/api/services']:
                             if request.method == 'GET':
                                 is_allowed = True
