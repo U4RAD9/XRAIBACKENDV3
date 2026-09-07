@@ -23,16 +23,15 @@ class User(models.Model):
 
 
 class UserLocationHistory(models.Model):
-    location = models.ForeignKey(
-        "locations.Location",
-        on_delete=models.CASCADE,
-        db_column="LocationID",
-        related_name="user_location_history",
+    legacy_location_id = models.IntegerField(
+        db_column="LocationID"
     )
 
     user = models.ForeignKey(
         "users.User",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         db_column="UserID",
         related_name="location_history",
     )
@@ -55,17 +54,10 @@ class UserLocationHistory(models.Model):
 
     class Meta:
         db_table = "users_location_history"
-
         indexes = [
-            models.Index(
-                fields=["user", "timestamp"]
-            ),
-            models.Index(
-                fields=["slot_booking"]
-            ),
-            models.Index(
-                fields=["timestamp"]
-            ),
+            models.Index(fields=["user", "timestamp"]),
+            models.Index(fields=["slot_booking"]),
+            models.Index(fields=["timestamp"]),
         ]
 
     def __str__(self):
