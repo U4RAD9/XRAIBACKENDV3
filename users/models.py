@@ -20,3 +20,116 @@ class User(models.Model):
 
     def __str__(self):
         return self.user_name
+
+
+class UserLocationHistory(models.Model):
+    location = models.ForeignKey(
+        "locations.Location",
+        on_delete=models.CASCADE,
+        db_column="LocationID",
+        related_name="user_location_history",
+    )
+
+    user = models.ForeignKey(
+        "users.User",
+        on_delete=models.CASCADE,
+        db_column="UserID",
+        related_name="location_history",
+    )
+
+    longitude = models.FloatField()
+    latitude = models.FloatField()
+
+    timestamp = models.DateTimeField(
+        db_column="TimeStamp"
+    )
+
+    slot_booking = models.ForeignKey(
+        "bookings.SlotBookingMaster",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="SlotBookingID",
+        related_name="location_history",
+    )
+
+    class Meta:
+        db_table = "users_location_history"
+
+        indexes = [
+            models.Index(
+                fields=["user", "timestamp"]
+            ),
+            models.Index(
+                fields=["slot_booking"]
+            ),
+            models.Index(
+                fields=["timestamp"]
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} - {self.timestamp}"
+
+
+class LegacyPermission(models.Model):
+    permission_id = models.IntegerField(
+        primary_key=True,
+        db_column="ID"
+    )
+
+    user = models.ForeignKey(
+        "users.User",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        db_column="User ID",
+        related_name="legacy_permissions",
+    )
+
+    controller = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+    )
+
+    action = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "legacy_permissions"
+
+    def __str__(self):
+        return f"{self.controller} - {self.action}"
+
+class VisitType(models.Model):
+    visit_type_id = models.IntegerField(
+        primary_key=True,
+        db_column="VISITTYPEID"
+    )
+
+    visit_type_name = models.CharField(
+        max_length=100,
+        db_column="VISITTYPENAME"
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        db_column="ISACTIVE"
+    )
+
+    trial353 = models.CharField(
+        max_length=10,
+        null=True,
+        blank=True,
+        db_column="TRIAL353"
+    )
+
+    class Meta:
+        db_table = "visit_type"
+
+    def __str__(self):
+        return self.visit_type_name
