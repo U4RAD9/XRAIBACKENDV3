@@ -196,13 +196,72 @@ def get_last_booking(request):
     
     return Response({"Success": True, "Booking": data}, status=status.HTTP_200_OK)
 
+# @api_view(['GET'])
+# @permission_classes([AllowAny])
+# def get_all_bookings(request):
+#     date = request.query_params.get('date')
+#     status_filter = request.query_params.get('status')
+    
+#     query = SlotBookingMaster.objects.all().order_by('-created_date')
+
+#     # Partner filtering logic
+#     user_info = getattr(request, 'user_info', {})
+#     user_type = user_info.get('UserType', '').lower()
+#     logged_in_user_id = user_info.get('UserID')
+
+#     if user_type == 'partner' and logged_in_user_id:
+#         query = query.filter(user_id=logged_in_user_id)
+        
+#     if date:
+#         query = query.filter(created_date__date=date)
+#     if status_filter and status_filter != 'All':
+#         query = query.filter(status=status_filter)
+        
+#     data = []
+#     for b in query:
+#         data.append({
+#             "id": b.slot_booking_id,
+#             "patientId": b.patient.patient_id if b.patient else "N/A",
+#             "phoneNo": b.patient.alternate_mobile_number if b.patient and b.patient.alternate_mobile_number else (b.user.mobile_number if b.user and b.user.mobile_number else (b.phone_number or "N/A")),
+#             "patientName": b.patient.patient_name if b.patient and b.patient.patient_name else (b.patient_name or "N/A"),
+#             "refNo": f"REF-{b.slot_booking_id}",
+#             "bookingDate": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else "N/A"),
+#             "slot": b.slot.slot_name if b.slot and b.slot.slot_name else "N/A",
+#             "paymentMethod": b.payment_method or "N/A",
+#             "paymentStatus": b.payment_status or "N/A",
+#             "technician": b.service_provider.full_name if b.service_provider and b.service_provider.full_name else (b.service_provider.user_name if b.service_provider else "N/A"),
+#             "remarks": "N/A",
+#             "isActive": b.is_active if b.is_active is not None else True,
+#             # Legacy fields for dashboard compatibility
+#             "mobile": b.user.mobile_number if b.user else b.phone_number,
+#             "service": b.service_group.service_group_name if b.service_group else "General",
+#             "date": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else ""),
+#             "time": b.slot.slot_name if b.slot else "N/A",
+#             "status": b.status,
+#             "amount": float(b.net_amount) if b.net_amount else 0.0,
+#             "address": b.booking_address or b.address
+#         })
+        
+#     return Response({"Success": True, "result": data}, status=status.HTTP_200_OK)
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def get_all_bookings(request):
     date = request.query_params.get('date')
     status_filter = request.query_params.get('status')
-    
-    query = SlotBookingMaster.objects.all().order_by('-created_date')
+
+    query = (
+        SlotBookingMaster.objects
+        .select_related(
+            'patient',
+            'user',
+            'slot',
+            'service_provider',
+            'service_group',
+        )
+        .all()
+        .order_by('-created_date')
+    )
 
     # Partner filtering logic
     user_info = getattr(request, 'user_info', {})
@@ -211,53 +270,69 @@ def get_all_bookings(request):
 
     if user_type == 'partner' and logged_in_user_id:
         query = query.filter(user_id=logged_in_user_id)
-        
+
     if date:
         query = query.filter(created_date__date=date)
+
     if status_filter and status_filter != 'All':
         query = query.filter(status=status_filter)
         
-    search = request.query_params.get('search')
-    if search:
-        from django.db.models import Q
-        query = query.filter(
-            Q(patient__patient_name__icontains=search) |
-            Q(patient__alternate_mobile_number__icontains=search) |
-            Q(user__mobile_number__icontains=search) |
-            Q(slot_booking_id__icontains=search) |
-            Q(phone_number__icontains=search)
-        )
-        
-    from webportal_core.pagination import StandardResultsSetPagination
-    paginator = StandardResultsSetPagination()
-    paginated_query = paginator.paginate_queryset(query, request)
-    
     data = []
-    for b in paginated_query:
+    for b in query:
         data.append({
             "id": b.slot_booking_id,
-            "patientId": b.patient.patient_id if b.patient else "N/A",
-            "phoneNo": b.patient.alternate_mobile_number if b.patient and b.patient.alternate_mobile_number else (b.user.mobile_number if b.user and b.user.mobile_number else (b.phone_number or "N/A")),
-            "patientName": b.patient.patient_name if b.patient and b.patient.patient_name else (b.patient_name or "N/A"),
+
+            "patientId": patient_id,
+
+            "phoneNo": phone_no,
+
+            "patientName": patient_name,
+
             "refNo": f"REF-{b.slot_booking_id}",
-            "bookingDate": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else "N/A"),
-            "slot": b.slot.slot_name if b.slot and b.slot.slot_name else "N/A",
+
+            "bookingDate": booking_date,
+
+            "slot": slot_name,
+
             "paymentMethod": b.payment_method or "N/A",
+
             "paymentStatus": b.payment_status or "N/A",
-            "technician": b.service_provider.full_name if b.service_provider and b.service_provider.full_name else (b.service_provider.user_name if b.service_provider else "N/A"),
+
+            "technician": technician,
+
             "remarks": "N/A",
-            "isActive": b.is_active if b.is_active is not None else True,
+
+            "isActive": (
+                b.is_active
+                if b.is_active is not None
+                else True
+            ),
+
             # Legacy fields for dashboard compatibility
-            "mobile": b.user.mobile_number if b.user else b.phone_number,
-            "service": b.service_group.service_group_name if b.service_group else "General",
-            "date": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else ""),
-            "time": b.slot.slot_name if b.slot else "N/A",
+            "mobile": (
+                b.user.mobile_number
+                if b.user
+                else b.phone_number
+            ),
+
+            "service": service_name,
+
+            "date": booking_date,
+
+            "time": slot_name,
+
             "status": b.status,
-            "amount": float(b.net_amount) if b.net_amount else 0.0,
+
+            "amount": (
+                float(b.net_amount)
+                if b.net_amount
+                else 0.0
+            ),
+
             "address": b.booking_address or b.address
         })
-#made by abhay
-    return paginator.get_paginated_response(data)
+        
+    return Response({"Success": True, "result": data}, status=status.HTTP_200_OK)
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
