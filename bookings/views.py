@@ -249,6 +249,7 @@ def get_last_booking(request):
 def get_all_bookings(request):
     date = request.query_params.get('date')
     status_filter = request.query_params.get('status')
+    search = request.query_params.get('search')
 
     query = (
         SlotBookingMaster.objects
@@ -276,63 +277,96 @@ def get_all_bookings(request):
 
     if status_filter and status_filter != 'All':
         query = query.filter(status=status_filter)
-        
+
+    if search:
+        from django.db.models import Q
+        query = query.filter(
+            Q(patient__patient_name__icontains=search) |
+            Q(patient__alternate_mobile_number__icontains=search) |
+            Q(user__mobile_number__icontains=search) |
+            Q(slot_booking_id__icontains=search) |
+            Q(phone_number__icontains=search)
+        )
+
+    from webportal_core.pagination import StandardResultsSetPagination
+    paginator = StandardResultsSetPagination()
+    paginated_query = paginator.paginate_queryset(query, request)
+
     data = []
-    for b in query:
+
+    for b in paginated_query:
+        # Patient
+        patient_id = b.patient.patient_id if b.patient else "N/A"
+
+        # Phone
+        if b.patient and b.patient.alternate_mobile_number:
+            phone_no = b.patient.alternate_mobile_number
+        elif b.user and b.user.mobile_number:
+            phone_no = b.user.mobile_number
+        else:
+            phone_no = b.phone_number or "N/A"
+
+        # Patient name
+        if b.patient and b.patient.patient_name:
+            patient_name = b.patient.patient_name
+        else:
+            patient_name = b.patient_name or "N/A"
+
+        # Technician
+        if b.service_provider:
+            technician = (
+                b.service_provider.full_name
+                if b.service_provider.full_name
+                else b.service_provider.user_name
+            )
+        else:
+            technician = "N/A"
+
+        # Booking date
+        if b.slot_booking_datetime:
+            booking_date = b.slot_booking_datetime.strftime('%Y-%m-%d')
+        elif b.created_date:
+            booking_date = b.created_date.strftime('%Y-%m-%d')
+        else:
+            booking_date = "N/A"
+
+        # Slot
+        slot_name = (
+            b.slot.slot_name
+            if b.slot and b.slot.slot_name
+            else "N/A"
+        )
+
+        # Service group
+        service_name = (
+            b.service_group.service_group_name
+            if b.service_group
+            else "General"
+        )
+
         data.append({
             "id": b.slot_booking_id,
-
             "patientId": patient_id,
-
             "phoneNo": phone_no,
-
             "patientName": patient_name,
-
             "refNo": f"REF-{b.slot_booking_id}",
-
             "bookingDate": booking_date,
-
             "slot": slot_name,
-
             "paymentMethod": b.payment_method or "N/A",
-
             "paymentStatus": b.payment_status or "N/A",
-
             "technician": technician,
-
             "remarks": "N/A",
-
-            "isActive": (
-                b.is_active
-                if b.is_active is not None
-                else True
-            ),
-
-            # Legacy fields for dashboard compatibility
-            "mobile": (
-                b.user.mobile_number
-                if b.user
-                else b.phone_number
-            ),
-
+            "isActive": (b.is_active if b.is_active is not None else True),
+            "mobile": (b.user.mobile_number if b.user else b.phone_number),
             "service": service_name,
-
             "date": booking_date,
-
             "time": slot_name,
-
             "status": b.status,
-
-            "amount": (
-                float(b.net_amount)
-                if b.net_amount
-                else 0.0
-            ),
-
+            "amount": (float(b.net_amount) if b.net_amount else 0.0),
             "address": b.booking_address or b.address
         })
-        
-    return Response({"Success": True, "result": data}, status=status.HTTP_200_OK)
+
+    return paginator.get_paginated_response(data)
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
