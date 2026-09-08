@@ -256,6 +256,7 @@ def get_all_bookings(request):
         .select_related(
             'patient',
             'user',
+            'user__user_type',
             'slot',
             'service_provider',
             'service_group',
@@ -344,8 +345,17 @@ def get_all_bookings(request):
             else "General"
         )
 
+        user_type_name = "Patient"
+        user_full_name = "N/A"
+        if b.user:
+            if b.user.user_type:
+                user_type_name = b.user.user_type.user_type_name
+            user_full_name = b.user.full_name or b.user.user_name
+
         data.append({
             "id": b.slot_booking_id,
+            "name": user_full_name,
+            "userType": user_type_name,
             "patientId": patient_id,
             "phoneNo": phone_no,
             "patientName": patient_name,
@@ -363,7 +373,11 @@ def get_all_bookings(request):
             "time": slot_name,
             "status": b.status,
             "amount": (float(b.net_amount) if b.net_amount else 0.0),
-            "address": b.booking_address or b.address
+            "address": b.booking_address or b.address,
+            "grossAmount": float(b.gross_amount) if b.gross_amount else 0.0,
+            "invoiceDiscount": float(b.invoice_discount) if b.invoice_discount else 0.0,
+            "itemDiscount": float(b.item_discount) if b.item_discount else 0.0,
+            "netAmount": float(b.net_amount) if b.net_amount else 0.0,
         })
 
     return paginator.get_paginated_response(data)
