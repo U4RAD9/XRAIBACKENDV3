@@ -1,4 +1,5 @@
-from rest_framework import viewsets
+from rest_framework import viewsets, filters
+from webportal_core.pagination import StandardResultsSetPagination
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -13,8 +14,11 @@ from .serializers import UserSerializer
 from otp_master.models import OtpMaster
 
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
+    queryset = User.objects.all().order_by('-id')
     serializer_class = UserSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['user_name', 'mobile_number', 'full_name', 'email']
 
     def _prepare_data(self, data):
         data = data.copy()

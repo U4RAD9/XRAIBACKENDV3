@@ -71,6 +71,8 @@ def save_booking(request):
         # Calculate amount if not provided
         if not amount and services:
             amount = sum([float(s.get('price') or 0) for s in services])
+            
+        gross_amount = data.get('gross_amount', amount)
 
         from users.models import User
         from patients.models import Patient
@@ -89,7 +91,7 @@ def save_booking(request):
             location=location,
             slot=slot,
             address=address,
-            gross_amount=amount,
+            gross_amount=gross_amount,
             net_amount=amount,
             status='Pending',
             payment_status=payment_status,
@@ -215,8 +217,23 @@ def get_all_bookings(request):
     if status_filter and status_filter != 'All':
         query = query.filter(status=status_filter)
         
+    search = request.query_params.get('search')
+    if search:
+        from django.db.models import Q
+        query = query.filter(
+            Q(patient__patient_name__icontains=search) |
+            Q(patient__alternate_mobile_number__icontains=search) |
+            Q(user__mobile_number__icontains=search) |
+            Q(slot_booking_id__icontains=search) |
+            Q(phone_number__icontains=search)
+        )
+        
+    from webportal_core.pagination import StandardResultsSetPagination
+    paginator = StandardResultsSetPagination()
+    paginated_query = paginator.paginate_queryset(query, request)
+    
     data = []
-    for b in query:
+    for b in paginated_query:
         data.append({
             "id": b.slot_booking_id,
             "patientId": b.patient.patient_id if b.patient else "N/A",
@@ -239,8 +256,8 @@ def get_all_bookings(request):
             "amount": float(b.net_amount) if b.net_amount else 0.0,
             "address": b.booking_address or b.address
         })
-        
-    return Response({"Success": True, "result": data}, status=status.HTTP_200_OK)
+#made by abhay
+    return paginator.get_paginated_response(data)
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -478,11 +495,26 @@ def get_technician_bookings(request):
     
     query = SlotBookingMaster.objects.filter(service_provider_id=technician_id).order_by('-created_date')
     
+    search = request.query_params.get('search')
+    if search:
+        from django.db.models import Q
+        query = query.filter(
+            Q(patient__patient_name__icontains=search) |
+            Q(patient__alternate_mobile_number__icontains=search) |
+            Q(user__mobile_number__icontains=search) |
+            Q(slot_booking_id__icontains=search) |
+            Q(phone_number__icontains=search)
+        )
+    
     pending_bookings = query.exclude(status='Completed').count()
     completed_bookings = query.filter(status='Completed').count()
     
+    from webportal_core.pagination import StandardResultsSetPagination
+    paginator = StandardResultsSetPagination()
+    paginated_query = paginator.paginate_queryset(query, request)
+    
     data = []
-    for b in query:
+    for b in paginated_query:
         details = SlotBookingDetails.objects.filter(slot_booking=b)
         files_count = 0
         for d in details:
@@ -515,7 +547,15 @@ def get_technician_bookings(request):
         "Bookings": data
     }
     
-    return Response({"Success": True, "result": result}, status=status.HTTP_200_OK)
+    return Response({
+        "Success": True, 
+        "count": paginator.page.paginator.count,
+        "next": paginator.get_next_link(),
+        "previous": paginator.get_previous_link(),
+        "total_pages": paginator.page.paginator.num_pages,
+        "current_page": paginator.page.number,
+        "result": result
+    }, status=status.HTTP_200_OK)
 
 @api_view(['POST', 'PATCH'])
 @permission_classes([AllowAny])
