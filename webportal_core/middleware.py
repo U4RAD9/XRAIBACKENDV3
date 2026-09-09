@@ -39,14 +39,16 @@ class BlockBrowserAPIAccessMiddleware:
                     '/api/locations',
                     '/api/service-groups',
                     '/api/services',
-                    '/api/patients'
+                    '/api/patients',
+                    '/api/offer-master',
+                    '/api/user-types'
                 ]
                 
                 is_allowed = False
                 for path in allowed_paths:
                     if request.path.startswith(path):
                         # For master tables, patients can only read (GET)
-                        if path in ['/api/locations', '/api/service-groups', '/api/services']:
+                        if path in ['/api/locations', '/api/service-groups', '/api/services', '/api/offer-master', '/api/user-types']:
                             if request.method == 'GET':
                                 is_allowed = True
                         else:
@@ -66,14 +68,16 @@ class BlockBrowserAPIAccessMiddleware:
                     '/api/booking',
                     '/api/locations',
                     '/api/service-groups',
-                    '/api/services'
+                    '/api/services',
+                    '/api/offer-master',
+                    '/api/user-types'
                 ]
                 
                 is_allowed = False
                 for path in allowed_paths:
                     if request.path.startswith(path):
                         # For master tables, technicians can only read (GET)
-                        if path in ['/api/locations', '/api/service-groups', '/api/services']:
+                        if path in ['/api/locations', '/api/service-groups', '/api/services', '/api/offer-master', '/api/user-types']:
                             if request.method == 'GET':
                                 is_allowed = True
                         else:
@@ -91,14 +95,16 @@ class BlockBrowserAPIAccessMiddleware:
                     '/api/locations',
                     '/api/service-groups',
                     '/api/services',
-                    '/api/patients'
+                    '/api/patients',
+                    '/api/offer-master',
+                    '/api/user-types'
                 ]
                 
                 is_allowed = False
                 for path in allowed_paths:
                     if request.path.startswith(path):
                         # For master tables, partners can only read (GET)
-                        if path in ['/api/locations', '/api/service-groups', '/api/services']:
+                        if path in ['/api/locations', '/api/service-groups', '/api/services', '/api/offer-master', '/api/user-types']:
                             if request.method == 'GET':
                                 is_allowed = True
                         else:
