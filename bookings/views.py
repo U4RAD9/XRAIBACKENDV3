@@ -435,7 +435,12 @@ def get_booking_details(request, id):
             },
             "prescriptionFile": b.prescription_filename if hasattr(b, 'prescription_filename') else None,
             "imageFile": b.upload_or_click_photo if hasattr(b, 'upload_or_click_photo') else None,
-            "services": services
+            "services": services,
+            "amount": float(b.net_amount) if b.net_amount else 0.0,
+            "gross_amount": float(b.gross_amount) if b.gross_amount else 0.0,
+            "net_amount": float(b.net_amount) if b.net_amount else 0.0,
+            "item_discount": float(b.item_discount) if b.item_discount else 0.0,
+            "invoice_discount": float(b.invoice_discount) if b.invoice_discount else 0.0
         }
         return Response({"Success": True, "Booking": data}, status=status.HTTP_200_OK)
     except SlotBookingMaster.DoesNotExist:
