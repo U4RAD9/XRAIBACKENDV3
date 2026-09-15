@@ -103,7 +103,9 @@ def signup(request):
         if User.objects.filter(mobile_number=mobile).exists():
             return Response({"Success": False, "Message": "User already exists"}, status=status.HTTP_200_OK)
 
-        user_type, created = UserType.objects.get_or_create(user_type_name="Patient")
+        user_type = UserType.objects.filter(user_type_name="Patient").first()
+        if not user_type:
+            user_type = UserType.objects.create(user_type_name="Patient")
 
         user = User.objects.create(
             user_type=user_type,
@@ -130,7 +132,9 @@ def authenticate_user(request):
         from django.db import models
         if mobile_or_username == 'admin' and mpin == 'admin123':
             if not User.objects.filter(user_name='admin').exists():
-                admin_type, _ = UserType.objects.get_or_create(user_type_name="Admin")
+                admin_type = UserType.objects.filter(user_type_name="Admin").first()
+                if not admin_type:
+                    admin_type = UserType.objects.create(user_type_name="Admin")
                 User.objects.create(
                     user_type=admin_type,
                     user_name="admin",
@@ -205,7 +209,9 @@ def employee_login(request):
 
     if username == 'admin' and password == 'admin123':
         if not User.objects.filter(user_name='admin').exists():
-            admin_type, _ = UserType.objects.get_or_create(user_type_name="Admin")
+            admin_type = UserType.objects.filter(user_type_name="Admin").first()
+            if not admin_type:
+                admin_type = UserType.objects.create(user_type_name="Admin")
             User.objects.create(
                 user_type=admin_type,
                 user_name="admin",
