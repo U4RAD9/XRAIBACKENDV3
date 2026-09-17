@@ -27,7 +27,9 @@ class UserViewSet(viewsets.ModelViewSet):
             user_type_name = user_type_name[0]
             
         if user_type_name:
-            user_type, _ = UserType.objects.get_or_create(user_type_name=user_type_name)
+            user_type = UserType.objects.filter(user_type_name=user_type_name).first()
+            if not user_type:
+                user_type = UserType.objects.create(user_type_name=user_type_name)
             data['user_type'] = user_type.user_type_id
             
         if 'password' in data:
