@@ -2,6 +2,7 @@ from rest_framework import viewsets, filters
 from webportal_core.pagination import StandardResultsSetPagination
 from .models import Patient
 from .serializers import PatientSerializer
+from bookings.models import SlotBookingMaster
 
 class PatientViewSet(viewsets.ModelViewSet):
     queryset = Patient.objects.all().order_by('-patient_id')
@@ -43,3 +44,16 @@ class PatientViewSet(viewsets.ModelViewSet):
                 serializer.save()
         except Exception:
             serializer.save()
+
+    def perform_update(self, serializer):
+        patient = serializer.save()
+        # Update associated bookings with new patient data
+        SlotBookingMaster.objects.filter(patient=patient).update(
+            patient_name=patient.patient_name,
+            age=patient.age,
+            weight=patient.weight,
+            gender=patient.gender,
+            address=patient.address,
+            alternate_mobile_number=patient.alternate_mobile_number,
+            email=patient.email
+        )

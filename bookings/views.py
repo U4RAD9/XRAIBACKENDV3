@@ -9,6 +9,7 @@ import os
 import datetime
 import razorpay # type: ignore
 from django.conf import settings
+from django.utils.timezone import localtime
 
 from .models import SlotBookingMaster, SlotBookingDetails, SlotBookingFile
 from .serializers import SlotBookingMasterSerializer, SlotBookingDetailsSerializer
@@ -148,7 +149,7 @@ def get_patient_bookings(request):
             "BookingID": b.slot_booking_id,
             "patientName": b.patient.patient_name if b.patient and b.patient.patient_name else (b.patient_name or "N/A"),
             "services": services_str,
-            "Date": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else "N/A"),
+            "Date": localtime(b.slot_booking_datetime).strftime('%Y-%m-%d') if b.slot_booking_datetime else (localtime(b.created_date).strftime('%Y-%m-%d') if b.created_date else "N/A"),
             "slot": b.slot.slot_name if b.slot and b.slot.slot_name else "N/A",
             "location": b.location.location_name if b.location and b.location.location_name else "N/A",
             "technician": b.service_provider.full_name if b.service_provider and b.service_provider.full_name else (b.service_provider.user_name if b.service_provider else "N/A"),
@@ -186,7 +187,7 @@ def get_last_booking(request):
         "slot_booking_id": last_booking.slot_booking_id,
         "location_id": last_booking.location.location_id if last_booking.location else None,
         "slot_id": last_booking.slot.slot_id if last_booking.slot else None,
-        "date": last_booking.slot_booking_datetime.strftime('%Y-%m-%d') if last_booking.slot_booking_datetime else None,
+        "date": localtime(last_booking.slot_booking_datetime).strftime('%Y-%m-%d') if last_booking.slot_booking_datetime else None,
         "payment_method": last_booking.payment_method,
         "address": last_booking.address,
         "prescription_file": last_booking.prescription_filename,
@@ -225,7 +226,7 @@ def get_last_booking(request):
 #             "phoneNo": b.patient.alternate_mobile_number if b.patient and b.patient.alternate_mobile_number else (b.user.mobile_number if b.user and b.user.mobile_number else (b.phone_number or "N/A")),
 #             "patientName": b.patient.patient_name if b.patient and b.patient.patient_name else (b.patient_name or "N/A"),
 #             "refNo": f"REF-{b.slot_booking_id}",
-#             "bookingDate": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else "N/A"),
+#             "bookingDate": localtime(b.slot_booking_datetime).strftime('%Y-%m-%d') if b.slot_booking_datetime else (localtime(b.created_date).strftime('%Y-%m-%d') if b.created_date else "N/A"),
 #             "slot": b.slot.slot_name if b.slot and b.slot.slot_name else "N/A",
 #             "paymentMethod": b.payment_method or "N/A",
 #             "paymentStatus": b.payment_status or "N/A",
@@ -235,7 +236,7 @@ def get_last_booking(request):
 #             # Legacy fields for dashboard compatibility
 #             "mobile": b.user.mobile_number if b.user else b.phone_number,
 #             "service": b.service_group.service_group_name if b.service_group else "General",
-#             "date": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else ""),
+#             "date": localtime(b.slot_booking_datetime).strftime('%Y-%m-%d') if b.slot_booking_datetime else (localtime(b.created_date).strftime('%Y-%m-%d') if b.created_date else ""),
 #             "time": b.slot.slot_name if b.slot else "N/A",
 #             "status": b.status,
 #             "amount": float(b.net_amount) if b.net_amount else 0.0,
@@ -274,7 +275,7 @@ def get_all_bookings(request):
         query = query.filter(user_id=logged_in_user_id)
 
     if date:
-        query = query.filter(created_date__date=date)
+        query = query.filter(slot_booking_datetime__date=date)
 
     if status_filter and status_filter != 'All':
         query = query.filter(status=status_filter)
@@ -325,9 +326,9 @@ def get_all_bookings(request):
 
         # Booking date
         if b.slot_booking_datetime:
-            booking_date = b.slot_booking_datetime.strftime('%Y-%m-%d')
+            booking_date = localtime(b.slot_booking_datetime).strftime('%Y-%m-%d')
         elif b.created_date:
-            booking_date = b.created_date.strftime('%Y-%m-%d')
+            booking_date = localtime(b.created_date).strftime('%Y-%m-%d')
         else:
             booking_date = "N/A"
 
@@ -418,10 +419,10 @@ def get_booking_details(request, id):
             "location_name": b.location.location_name if b.location else "N/A",
             "slot_name": b.slot.slot_name if b.slot else "N/A",
             "visit_type": "Home",
-            "visit_date": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else "N/A"),
+            "visit_date": localtime(b.slot_booking_datetime).strftime('%Y-%m-%d') if b.slot_booking_datetime else (localtime(b.created_date).strftime('%Y-%m-%d') if b.created_date else "N/A"),
             "payment_mode": b.payment_method or "N/A",
             "technician_id": b.service_provider.id if b.service_provider else "",
-            "created_on": b.created_date.strftime('%d-%m-%Y %H:%M:%S') if b.created_date else "N/A",
+            "created_on": localtime(b.created_date).strftime('%d-%m-%Y %H:%M:%S') if b.created_date else "N/A",
             "patient": {
                 "phoneNo": b.patient.alternate_mobile_number if b.patient and b.patient.alternate_mobile_number else (b.user.mobile_number if b.user and b.user.mobile_number else (b.phone_number or "N/A")),
                 "patientName": b.patient.patient_name if b.patient and b.patient.patient_name else (b.patient_name or "N/A"),
@@ -448,6 +449,7 @@ def get_booking_details(request, id):
 
 import os
 from django.conf import settings
+from django.utils.timezone import localtime
 from django.core.files.storage import FileSystemStorage
 
 @api_view(['POST'])
@@ -658,7 +660,7 @@ def get_technician_bookings(request):
             "phoneNo": b.patient.alternate_mobile_number if b.patient and b.patient.alternate_mobile_number else (b.user.mobile_number if b.user and b.user.mobile_number else (b.phone_number or "N/A")),
             "patientName": b.patient.patient_name if b.patient and b.patient.patient_name else (b.patient_name or "N/A"),
             "refNo": f"REF-{b.slot_booking_id}",
-            "bookingDate": b.slot_booking_datetime.strftime('%Y-%m-%d') if b.slot_booking_datetime else (b.created_date.strftime('%Y-%m-%d') if b.created_date else "N/A"),
+            "bookingDate": localtime(b.slot_booking_datetime).strftime('%Y-%m-%d') if b.slot_booking_datetime else (localtime(b.created_date).strftime('%Y-%m-%d') if b.created_date else "N/A"),
             "slot": b.slot.slot_name if b.slot and b.slot.slot_name else "N/A",
             "paymentMethod": b.payment_method or "N/A",
             "paymentStatus": b.payment_status or "N/A",
