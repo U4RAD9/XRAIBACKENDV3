@@ -41,7 +41,8 @@ class BlockBrowserAPIAccessMiddleware:
                     '/api/services',
                     '/api/patients',
                     '/api/offer-master',
-                    '/api/user-types'
+                    '/api/user-types',
+                    '/api/tracking'
                 ]
                 
                 is_allowed = False
@@ -70,7 +71,8 @@ class BlockBrowserAPIAccessMiddleware:
                     '/api/service-groups',
                     '/api/services',
                     '/api/offer-master',
-                    '/api/user-types'
+                    '/api/user-types',
+                    '/api/tracking'
                 ]
                 
                 is_allowed = False
@@ -97,7 +99,8 @@ class BlockBrowserAPIAccessMiddleware:
                     '/api/services',
                     '/api/patients',
                     '/api/offer-master',
-                    '/api/user-types'
+                    '/api/user-types',
+                    '/api/tracking'
                 ]
                 
                 is_allowed = False

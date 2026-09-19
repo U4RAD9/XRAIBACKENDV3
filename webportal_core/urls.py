@@ -7,7 +7,7 @@ from django.conf.urls.static import static
 from users.views import (UserViewSet,
                             send_otp, verify_otp, signup, authenticate_user,
                             forget_mpin, get_visitor_mpin, employee_login,
-                            update_password)
+                            update_password, tracking_api)
 from user_type.views import UserTypeViewSet
 from otp_master.views import OtpMasterViewSet
 from locations.views import LocationViewSet
@@ -52,6 +52,7 @@ urlpatterns = [
     path('api/auth/forget_mpin', forget_mpin, name='forget_mpin'),
     path('api/auth/update_password', update_password, name='update_password'),
     path('api/auth/get_visitor_mpin', get_visitor_mpin, name='get_visitor_mpin'),
+    path('api/tracking/', tracking_api, name='tracking_api'),
     path('api/booking/get_slots', get_slots, name='get_slots'),
     path('api/booking/get_services', get_services_by_group, name='get_services'),
     path('api/booking/get_price', get_price, name='get_price'),

@@ -9,9 +9,9 @@ import traceback
 from django.utils import timezone
 
 from user_type.models import UserType
-from .models import User
-from .serializers import UserSerializer
+from .serializers import UserSerializer, UserLocationHistorySerializer
 from otp_master.models import OtpMaster
+from .models import User, UserLocationHistory
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-id')
@@ -258,3 +258,26 @@ def update_password(request):
         return Response({"Success": False, "Message": "User not found."}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"Success": False, "Message": str(e)}, status=status.HTTP_200_OK)
+
+@api_view(['GET', 'POST'])
+@permission_classes([AllowAny]) # Adjust if needing auth
+def tracking_api(request):
+    if request.method == 'POST':
+        # Technician pushes location
+        serializer = UserLocationHistorySerializer(data=request.data)
+        if serializer.is_valid():
+            # If we don't have legacy_location_id provided, default it to 0
+            # because it is an integer field in DB
+            serializer.save(legacy_location_id=request.data.get('legacy_location_id', 0))
+            return Response({"Success": True, "Message": "Location saved"}, status=status.HTTP_201_CREATED)
+        return Response({"Success": False, "Message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+    elif request.method == 'GET':
+        # Fetch locations for a booking
+        booking_id = request.query_params.get('booking_id')
+        if not booking_id:
+            return Response({"Success": False, "Message": "booking_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        locations = UserLocationHistory.objects.filter(slot_booking_id=booking_id).order_by('timestamp')
+        serializer = UserLocationHistorySerializer(locations, many=True)
+        return Response({"Success": True, "Markers": serializer.data}, status=status.HTTP_200_OK)

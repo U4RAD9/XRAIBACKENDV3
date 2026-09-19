@@ -1,8 +1,13 @@
 from rest_framework import serializers
-from .models import User
+from .models import User, UserLocationHistory
 
 class UserSerializer(serializers.ModelSerializer):
     user_type_name = serializers.CharField(source='user_type.user_type_name', read_only=True)
     class Meta:
         model = User
         fields = '__all__'
+
+class UserLocationHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserLocationHistory
+        fields = ['user', 'slot_booking', 'latitude', 'longitude', 'timestamp']
