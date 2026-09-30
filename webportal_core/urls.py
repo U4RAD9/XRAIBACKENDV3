@@ -7,7 +7,7 @@ from django.conf.urls.static import static
 from users.views import (UserViewSet,
                             send_otp, verify_otp, signup, authenticate_user,
                             forget_mpin, get_visitor_mpin, employee_login,
-                            update_password, tracking_api)
+                            update_password, tracking_api, send_login_otp, login_with_otp)
 from user_type.views import UserTypeViewSet
 from otp_master.views import OtpMasterViewSet
 from locations.views import LocationViewSet
@@ -48,6 +48,8 @@ urlpatterns = [
     path('api/auth/verify_otp', verify_otp, name='verify_otp'),
     path('api/auth/signup', signup, name='signup'),
     path('api/auth/login', authenticate_user, name='login'),
+    path('api/auth/send_login_otp', send_login_otp, name='send_login_otp'),
+    path('api/auth/login_with_otp', login_with_otp, name='login_with_otp'),
     path('api/auth/employee_login', employee_login, name='employee_login'),
     path('api/auth/forget_mpin', forget_mpin, name='forget_mpin'),
     path('api/auth/update_password', update_password, name='update_password'),

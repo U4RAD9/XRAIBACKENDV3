@@ -6,7 +6,15 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 import random
 import traceback
+import requests
+import threading
 from django.utils import timezone
+
+def send_sms_background(url, headers, payload):
+    try:
+        requests.post(url, headers=headers, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Error sending SMS: {e}")
 
 from user_type.models import UserType
 from .serializers import UserSerializer, UserLocationHistorySerializer
@@ -73,7 +81,23 @@ def send_otp(request):
     otp_val = str(random.randint(100000, 999999))
     try:
         OtpMaster.objects.create(otp=otp_val, mobile=mobile, otp_datetime=timezone.now())
-        return Response({"StatusCode": True, "Message": f"OTP {otp_val} has been sent to {mobile}. Please verify your OTP to complete registration.", "OTP": otp_val}, status=status.HTTP_200_OK)
+        
+        # Send SMS via Fast2SMS asynchronously
+        url = "https://www.fast2sms.com/dev/bulkV2"
+        headers = {
+            "authorization": "62e0GqTE9j8eVW8jRbwef7364RwFgDYU8DXqjfp8Nqcj7vyJ4w3iFeVRmwJ3",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "route": "dlt",
+            "sender_id": "XRAIHD",
+            "message": "204048",
+            "variables_values": otp_val,
+            "numbers": mobile
+        }
+        threading.Thread(target=send_sms_background, args=(url, headers, payload)).start()
+        
+        return Response({"StatusCode": True, "Message": f"OTP has been sent to {mobile}. Please verify your OTP to complete registration."}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"StatusCode": False, "Message": str(e)}, status=status.HTTP_200_OK)
 
@@ -183,7 +207,23 @@ def forget_mpin(request):
     otp_val = str(random.randint(100000, 999999))
     try:
         OtpMaster.objects.create(otp=otp_val, mobile=mobile, otp_datetime=timezone.now())
-        return Response({"StatusCode": True, "Message": "OTP has been sent.", "OTP": otp_val}, status=status.HTTP_200_OK)
+        
+        # Send SMS via Fast2SMS asynchronously
+        url = "https://www.fast2sms.com/dev/bulkV2"
+        headers = {
+            "authorization": "62e0GqTE9j8eVW8jRbwef7364RwFgDYU8DXqjfp8Nqcj7vyJ4w3iFeVRmwJ3",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "route": "dlt",
+            "sender_id": "XRAIHD",
+            "message": "204048",
+            "variables_values": otp_val,
+            "numbers": mobile
+        }
+        threading.Thread(target=send_sms_background, args=(url, headers, payload)).start()
+
+        return Response({"StatusCode": True, "Message": "OTP has been sent to your registered mobile number."}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"StatusCode": False, "Message": str(e)}, status=status.HTTP_200_OK)
 
@@ -281,3 +321,81 @@ def tracking_api(request):
         locations = UserLocationHistory.objects.filter(slot_booking_id=booking_id).order_by('timestamp')
         serializer = UserLocationHistorySerializer(locations, many=True)
         return Response({"Success": True, "Markers": serializer.data}, status=status.HTTP_200_OK)
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def send_login_otp(request):
+    mobile_or_username = request.data.get('mobile')
+    if not mobile_or_username:
+        return Response({"StatusCode": False, "Message": "Mobile number or username required"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    from django.db import models
+    user = User.objects.filter(models.Q(mobile_number=mobile_or_username) | models.Q(user_name=mobile_or_username)).first()
+    
+    if not user:
+        return Response({"StatusCode": False, "Message": "User does not exist."}, status=status.HTTP_200_OK)
+    
+    actual_mobile = user.mobile_number
+    if not actual_mobile:
+        return Response({"StatusCode": False, "Message": "No mobile number attached to this user."}, status=status.HTTP_200_OK)
+
+    otp_val = str(random.randint(100000, 999999))
+    try:
+        OtpMaster.objects.create(otp=otp_val, mobile=actual_mobile, otp_datetime=timezone.now())
+        
+        # Send SMS via Fast2SMS asynchronously
+        url = "https://www.fast2sms.com/dev/bulkV2"
+        headers = {
+            "authorization": "62e0GqTE9j8eVW8jRbwef7364RwFgDYU8DXqjfp8Nqcj7vyJ4w3iFeVRmwJ3",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "route": "dlt",
+            "sender_id": "XRAIHD",
+            "message": "204048",
+            "variables_values": otp_val,
+            "numbers": actual_mobile
+        }
+        threading.Thread(target=send_sms_background, args=(url, headers, payload)).start()
+        
+        return Response({"StatusCode": True, "Message": "OTP has been sent to your registered mobile number.", "ActualMobile": actual_mobile}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({"StatusCode": False, "Message": str(e)}, status=status.HTTP_200_OK)
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login_with_otp(request):
+    mobile = request.data.get('mobile')
+    otp = request.data.get('otp')
+
+    if not mobile or not otp:
+        return Response({"Success": False, "message": "Mobile number and OTP are required."}, status=status.HTTP_200_OK)
+
+    latest_otp = OtpMaster.objects.filter(mobile=mobile).order_by('-otp_id').first()
+    if latest_otp and latest_otp.otp == otp:
+        user = User.objects.filter(mobile_number=mobile).first()
+        if user:
+            from django.core import signing
+            token_payload = {
+                "UserID": user.id,
+                "UserType": user.user_type.user_type_name
+            }
+            auth_token = signing.dumps(token_payload)
+
+            return Response({
+                "Success": True, 
+                "message": "User has been logged in successfully.",
+                "Token": auth_token,
+                "UserType": user.user_type.user_type_name,
+                "UserID": user.id,
+                "UserName": user.user_name,
+                "FullName": user.full_name or user.user_name,
+                "Age": user.age,
+                "Gender": user.gender,
+                "MobileNumber": user.mobile_number
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({"Success": False, "message": "User not found."}, status=status.HTTP_200_OK)
+    else:
+        return Response({"Success": False, "message": "Invalid OTP."}, status=status.HTTP_200_OK)
+

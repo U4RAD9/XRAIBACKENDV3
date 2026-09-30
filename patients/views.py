@@ -57,3 +57,17 @@ class PatientViewSet(viewsets.ModelViewSet):
             alternate_mobile_number=patient.alternate_mobile_number,
             email=patient.email
         )
+
+    def perform_destroy(self, instance):
+        # When a patient is deleted, ensure all related data is wiped out completely
+        from users.models import UserLocationHistory
+        bookings = SlotBookingMaster.objects.filter(patient=instance)
+        
+        # Delete all technician tracking location points associated with these bookings
+        UserLocationHistory.objects.filter(slot_booking__in=bookings).delete()
+        
+        # Delete all bookings (this will automatically cascade and delete SlotBookingDetails and SlotBookingFiles)
+        bookings.delete()
+        
+        # Finally delete the patient
+        instance.delete()
