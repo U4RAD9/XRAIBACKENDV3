@@ -91,7 +91,7 @@ def send_otp(request):
         payload = {
             "route": "dlt",
             "sender_id": "XRAIHD",
-            "message": "204048",
+            "message": "204046",
             "variables_values": otp_val,
             "numbers": mobile
         }
@@ -169,7 +169,11 @@ def authenticate_user(request):
                 )
 
         user = User.objects.filter(models.Q(mobile_number=mobile_or_username) | models.Q(user_name=mobile_or_username)).first()
-        if user and (user.mpin == mpin or user.password == mpin):
+        
+        if not user:
+            return Response({"Success": False, "message": "Mobile number is not registered."}, status=status.HTTP_200_OK)
+
+        if user.mpin == mpin or user.password == mpin:
             from django.core import signing
             token_payload = {
                 "UserID": user.id,
@@ -190,7 +194,7 @@ def authenticate_user(request):
                 "MobileNumber": user.mobile_number
             }, status=status.HTTP_200_OK)
         else:
-            return Response({"Success": False, "message": "Invalid mobile number or MPIN."}, status=status.HTTP_200_OK)
+            return Response({"Success": False, "message": "Invalid password or MPIN."}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"Success": False, "message": str(e)}, status=status.HTTP_200_OK)
 
@@ -217,7 +221,7 @@ def forget_mpin(request):
         payload = {
             "route": "dlt",
             "sender_id": "XRAIHD",
-            "message": "204048",
+            "message": "204045",
             "variables_values": otp_val,
             "numbers": mobile
         }
@@ -235,9 +239,12 @@ def get_visitor_mpin(request):
         return Response({"StatusCode": False, "MPin": ""}, status=status.HTTP_200_OK)
     
     try:
-        user = User.objects.get(mobile_number=mobile)
-        return Response({"StatusCode": True, "MPin": user.mpin}, status=status.HTTP_200_OK)
-    except User.DoesNotExist:
+        user = User.objects.filter(mobile_number=mobile).first()
+        if user:
+            return Response({"StatusCode": True, "MPin": user.mpin}, status=status.HTTP_200_OK)
+        else:
+            return Response({"StatusCode": False, "MPin": ""}, status=status.HTTP_200_OK)
+    except Exception as e:
         return Response({"StatusCode": False, "MPin": ""}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
@@ -286,7 +293,10 @@ def update_password(request):
         return Response({"Success": False, "Message": "Mobile, Email, and New Password are required."}, status=status.HTTP_200_OK)
         
     try:
-        user = User.objects.get(mobile_number=mobile)
+        user = User.objects.filter(mobile_number=mobile).first()
+        if not user:
+            return Response({"Success": False, "Message": "User not found."}, status=status.HTTP_200_OK)
+
         if user.email != email:
             return Response({"Success": False, "Message": "Email does not match our records for this mobile number."}, status=status.HTTP_200_OK)
         
@@ -294,8 +304,6 @@ def update_password(request):
         user.mpin = new_password
         user.save()
         return Response({"Success": True, "Message": "Password updated successfully."}, status=status.HTTP_200_OK)
-    except User.DoesNotExist:
-        return Response({"Success": False, "Message": "User not found."}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"Success": False, "Message": str(e)}, status=status.HTTP_200_OK)
 
