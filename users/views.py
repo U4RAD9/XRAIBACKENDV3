@@ -2,8 +2,14 @@ from rest_framework import viewsets, filters
 from webportal_core.pagination import StandardResultsSetPagination
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
+from rest_framework.throttling import AnonRateThrottle
+from django.conf import settings
+
+class OTPRateThrottle(AnonRateThrottle):
+    scope = 'otp_requests'
+
 import random
 import traceback
 import requests
@@ -69,6 +75,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 @api_view(['POST'])
+@throttle_classes([OTPRateThrottle])
 @permission_classes([AllowAny])
 def send_otp(request):
     mobile = request.data.get('mobile')
@@ -85,7 +92,7 @@ def send_otp(request):
         # Send SMS via Fast2SMS asynchronously
         url = "https://www.fast2sms.com/dev/bulkV2"
         headers = {
-            "authorization": "62e0GqTE9j8eVW8jRbwef7364RwFgDYU8DXqjfp8Nqcj7vyJ4w3iFeVRmwJ3",
+            "authorization": settings.FAST2SMS_API_KEY,
             "Content-Type": "application/json"
         }
         payload = {
@@ -199,6 +206,7 @@ def authenticate_user(request):
         return Response({"Success": False, "message": str(e)}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@throttle_classes([OTPRateThrottle])
 @permission_classes([AllowAny])
 def forget_mpin(request):
     mobile = request.data.get('mobile')
@@ -215,7 +223,7 @@ def forget_mpin(request):
         # Send SMS via Fast2SMS asynchronously
         url = "https://www.fast2sms.com/dev/bulkV2"
         headers = {
-            "authorization": "62e0GqTE9j8eVW8jRbwef7364RwFgDYU8DXqjfp8Nqcj7vyJ4w3iFeVRmwJ3",
+            "authorization": settings.FAST2SMS_API_KEY,
             "Content-Type": "application/json"
         }
         payload = {
@@ -327,6 +335,7 @@ def tracking_api(request):
         return Response({"Success": True, "Markers": serializer.data}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@throttle_classes([OTPRateThrottle])
 @permission_classes([AllowAny])
 def send_login_otp(request):
     mobile_or_username = request.data.get('mobile')
@@ -350,7 +359,7 @@ def send_login_otp(request):
         # Send SMS via Fast2SMS asynchronously
         url = "https://www.fast2sms.com/dev/bulkV2"
         headers = {
-            "authorization": "62e0GqTE9j8eVW8jRbwef7364RwFgDYU8DXqjfp8Nqcj7vyJ4w3iFeVRmwJ3",
+            "authorization": settings.FAST2SMS_API_KEY,
             "Content-Type": "application/json"
         }
         payload = {

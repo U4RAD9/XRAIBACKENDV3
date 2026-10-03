@@ -138,3 +138,14 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_ALL_HEADERS = True
+
+# Security Settings & API Keys
+import os
+FAST2SMS_API_KEY = os.getenv('FAST2SMS_API_KEY')
+
+# Django Rest Framework Throttling (Rate Limiting)
+REST_FRAMEWORK = {
+    'DEFAULT_THROTTLE_RATES': {
+        'otp_requests': '5/minute',
+    }
+}

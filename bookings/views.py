@@ -124,9 +124,22 @@ def save_booking(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def get_patient_bookings(request):
-    user_id = request.query_params.get('user_id')
-    if not user_id:
+    user_id_param = request.query_params.get('user_id')
+    if not user_id_param:
         return Response({"Success": False, "Message": "user_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # SECURITY FIX: Cross-Patient Data Authorization
+    user_info = getattr(request, 'user_info', {})
+    token_user_type = user_info.get('UserType', '').lower()
+    token_user_id = user_info.get('UserID')
+
+    # If the user is not an Admin, strictly force them to only query their own ID
+    if token_user_type != 'admin':
+        if str(token_user_id) != str(user_id_param):
+            return Response({"Success": False, "Message": "Unauthorized access to another patient's data blocked."}, status=status.HTTP_403_FORBIDDEN)
+        user_id = token_user_id
+    else:
+        user_id = user_id_param
     
     from django.db.models import Q
     # Filter bookings where service_provider is NOT NULL and belongs to this user either as creator or patient
