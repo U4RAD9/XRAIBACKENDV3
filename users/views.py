@@ -286,19 +286,15 @@ def employee_login(request):
 @permission_classes([AllowAny])
 def update_password(request):
     mobile = request.data.get('mobile')
-    email = request.data.get('email')
     new_password = request.data.get('new_password')
     
-    if not mobile or not email or not new_password:
-        return Response({"Success": False, "Message": "Mobile, Email, and New Password are required."}, status=status.HTTP_200_OK)
+    if not mobile or not new_password:
+        return Response({"Success": False, "Message": "Mobile and New Password are required."}, status=status.HTTP_200_OK)
         
     try:
         user = User.objects.filter(mobile_number=mobile).first()
         if not user:
             return Response({"Success": False, "Message": "User not found."}, status=status.HTTP_200_OK)
-
-        if user.email != email:
-            return Response({"Success": False, "Message": "Email does not match our records for this mobile number."}, status=status.HTTP_200_OK)
         
         user.password = new_password
         user.mpin = new_password
