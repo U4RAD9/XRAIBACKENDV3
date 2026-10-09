@@ -163,18 +163,6 @@ def authenticate_user(request):
 
     try:
         from django.db import models
-        if mobile_or_username == 'admin' and mpin == 'admin123':
-            if not User.objects.filter(user_name='admin').exists():
-                admin_type = UserType.objects.filter(user_type_name="Admin").first()
-                if not admin_type:
-                    admin_type = UserType.objects.create(user_type_name="Admin")
-                User.objects.create(
-                    user_type=admin_type,
-                    user_name="admin",
-                    password="admin123",
-                    full_name="Administrator"
-                )
-
         user = User.objects.filter(models.Q(mobile_number=mobile_or_username) | models.Q(user_name=mobile_or_username)).first()
         
         if not user:
@@ -263,18 +251,6 @@ def employee_login(request):
 
     if not username or not password:
         return Response({"Success": False, "message": "Username and Password required."}, status=status.HTTP_200_OK)
-
-    if username == 'admin' and password == 'admin123':
-        if not User.objects.filter(user_name='admin').exists():
-            admin_type = UserType.objects.filter(user_type_name="Admin").first()
-            if not admin_type:
-                admin_type = UserType.objects.create(user_type_name="Admin")
-            User.objects.create(
-                user_type=admin_type,
-                user_name="admin",
-                password="admin123",
-                full_name="Administrator"
-            )
 
     try:
         user = User.objects.get(user_name=username, password=password)
