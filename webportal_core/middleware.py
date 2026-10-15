@@ -42,7 +42,8 @@ class BlockBrowserAPIAccessMiddleware:
                     '/api/patients',
                     '/api/offer-master',
                     '/api/user-types',
-                    '/api/tracking'
+                    '/api/tracking',
+                    '/api/dpdp-consents/my-consent'
                 ]
                 
                 is_allowed = False
@@ -60,8 +61,21 @@ class BlockBrowserAPIAccessMiddleware:
                     return HttpResponseForbidden("You do not have permission to access this resource.")
             
             elif user_type == 'admin':
-                # Admins have access to everything
+                # Admins have access to operational resources, but not SuperAdmin consent governance
+                if request.path.startswith('/api/dpdp-consents'):
+                    return HttpResponseForbidden("SuperAdmin access required.")
                 pass
+
+            elif user_type == 'superadmin':
+                # SuperAdmins have access to governance resources, but not operational admin resources
+                allowed_paths = [
+                    '/api/dpdp-consents',
+                    '/api/tracking'
+                ]
+                is_allowed = any(request.path.startswith(path) for path in allowed_paths)
+                if not is_allowed:
+                    return HttpResponseForbidden("Admin operational access required.")
+
             
             elif user_type == 'technician':
                 # Allowed paths for Technician

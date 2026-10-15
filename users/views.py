@@ -2,7 +2,7 @@ from rest_framework import viewsets, filters
 from webportal_core.pagination import StandardResultsSetPagination
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes, action
 from rest_framework.permissions import AllowAny
 from rest_framework.throttling import AnonRateThrottle
 from django.conf import settings
@@ -23,9 +23,9 @@ def send_sms_background(url, headers, payload):
         print(f"Error sending SMS: {e}")
 
 from user_type.models import UserType
-from .serializers import UserSerializer, UserLocationHistorySerializer
+from .serializers import UserSerializer, UserLocationHistorySerializer, DPDPConsentLogSerializer
 from otp_master.models import OtpMaster
-from .models import User, UserLocationHistory
+from .models import User, UserLocationHistory, DPDPConsentLog, generate_consent_id
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-id')
@@ -122,6 +122,38 @@ def verify_otp(request):
     
     return Response(False, status=status.HTTP_200_OK)
 
+CLAUSE_DESCRIPTIONS = {
+    'a': 'I have read and understood this Notice and Request for Consent.',
+    'b': 'I consent to U4RAD Technologies and its brand XRAi Digital collecting and Processing my personal and health data for the purposes in Section 2, except research and internal marketing, which need my separate consent below.',
+    'c': 'I understand that if my test is sponsored by an employer or insurer, my result will be shared with that sponsor.',
+    'd': 'I am 18 or older, or I am the parent / guardian giving consent on behalf of a minor.',
+    'e': 'I agree to receive service communications (results, appointment updates) by phone, SMS, email or WhatsApp.',
+    'f': 'Research: my de-identified data may be used for research and to improve clinical outcomes and our data models.',
+    'g': 'Offers: XRAi Digital may use my data only for internal marketing of test discounts and offers. My data will NOT be shared with any third party for marketing.',
+    'h': 'Longer retention: my reports and images may be kept beyond the period required by law, so doctors can compare my future tests with earlier ones.',
+}
+
+def format_consented_purposes(consent_record):
+    required_in = consent_record.get('required', {}) if isinstance(consent_record, dict) else {}
+    optional_in = consent_record.get('optional', {}) if isinstance(consent_record, dict) else {}
+
+    required_out = {}
+    for k in ['a', 'b', 'c', 'd', 'e']:
+        desc = CLAUSE_DESCRIPTIONS[k]
+        val = required_in.get(k) if k in required_in else required_in.get(desc, True)
+        required_out[desc] = bool(val)
+
+    optional_out = {}
+    for k in ['f', 'g', 'h']:
+        desc = CLAUSE_DESCRIPTIONS[k]
+        val = optional_in.get(k) if k in optional_in else optional_in.get(desc, True)
+        optional_out[desc] = bool(val)
+
+    return {
+        'required': required_out,
+        'optional': optional_out
+    }
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def signup(request):
@@ -132,6 +164,8 @@ def signup(request):
         email = request.data.get('Email')
         gender = request.data.get('Gender')
         age = request.data.get('Age')
+        otp = request.data.get('otp')
+        consent_record = request.data.get('consentRecord', {})
 
         if User.objects.filter(mobile_number=mobile).exists():
             return Response({"Success": False, "Message": "User already exists"}, status=status.HTTP_200_OK)
@@ -151,7 +185,58 @@ def signup(request):
             gender=gender,
             age=age
         )
-        return Response({"Success": True, "Message": "User registered successfully"}, status=status.HTTP_200_OK)
+
+        # Record DPDP Consent Audit Trail
+        consent_id = None
+        try:
+            shared_otp_val = otp
+            if not shared_otp_val:
+                latest_otp_obj = OtpMaster.objects.filter(mobile=mobile).order_by('-otp_id').first()
+                if latest_otp_obj:
+                    shared_otp_val = latest_otp_obj.otp
+
+            consent_ts = timezone.now()
+            if isinstance(consent_record, dict) and consent_record.get('timestamp'):
+                try:
+                    from django.utils.dateparse import parse_datetime
+                    parsed = parse_datetime(consent_record.get('timestamp'))
+                    if parsed:
+                        consent_ts = parsed
+                except Exception:
+                    pass
+
+            notice_version = consent_record.get('noticeVersion', 'DPDP-1.0') if isinstance(consent_record, dict) else 'DPDP-1.0'
+            consented_purposes = format_consented_purposes(consent_record)
+
+            consent_log = DPDPConsentLog.objects.create(
+                consent_id=generate_consent_id(),
+                user=user,
+                patient_id=user.id,
+                patient_number=mobile,
+                full_name=full_name,
+                email=email,
+                shared_otp=shared_otp_val,
+                notice_version=notice_version,
+                notice_title='Digital Personal Data Protection Act, 2023 Consent Notice',
+                consent_timestamp=consent_ts,
+                status='ACTIVE',
+                consented_purposes=consented_purposes,
+                consent_statement="I hereby consent to collection and processing of my data for availing Diagnostic Services and relevant services in the manner described in the notice here.",
+                metadata={
+                    'channel': 'web_patient_registration',
+                    'gender': gender,
+                    'age': age
+                }
+            )
+            consent_id = consent_log.consent_id
+        except Exception as consent_err:
+            print(f"Error saving DPDP consent log: {consent_err}")
+
+        return Response({
+            "Success": True, 
+            "Message": "User registered successfully",
+            "ConsentID": consent_id
+        }, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"Success": False, "Message": str(e)}, status=status.HTTP_200_OK)
 
@@ -387,4 +472,194 @@ def login_with_otp(request):
             return Response({"Success": False, "message": "User not found."}, status=status.HTTP_200_OK)
     else:
         return Response({"Success": False, "message": "Invalid OTP."}, status=status.HTTP_200_OK)
+
+
+class DPDPConsentLogViewSet(viewsets.ModelViewSet):
+    permission_classes = [AllowAny]
+    queryset = DPDPConsentLog.objects.all().order_by('-created_at')
+    serializer_class = DPDPConsentLogSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['consent_id', 'patient_number', 'patient_id', 'full_name', 'email', 'shared_otp', 'status', 'notice_version']
+
+    def get_queryset(self):
+        queryset = DPDPConsentLog.objects.all().order_by('-created_at')
+        status_param = self.request.query_params.get('status')
+        if status_param:
+            queryset = queryset.filter(status=status_param.upper())
+        patient_param = self.request.query_params.get('patient_number')
+        if patient_param:
+            queryset = queryset.filter(patient_number=patient_param)
+        patient_id_param = self.request.query_params.get('patient_id')
+        if patient_id_param:
+            queryset = queryset.filter(patient_id=patient_id_param)
+        consent_id_param = self.request.query_params.get('consent_id')
+        if consent_id_param:
+            queryset = queryset.filter(consent_id=consent_id_param)
+        return queryset
+
+    @action(detail=True, methods=['post'])
+    def withdraw(self, request, pk=None):
+        """Allows SuperAdmin to record consent withdrawal or approve a patient's pending revocation request"""
+        consent = self.get_object()
+        reason = request.data.get('reason', 'SuperAdmin recorded consent withdrawal under DPDP Act Section 6(4)')
+        withdrawn_by = request.data.get('withdrawn_by', 'SuperAdmin')
+        consent.status = 'WITHDRAWN'
+        meta = consent.metadata or {}
+
+        # Mark request as approved if pending
+        if 'withdrawal_request' in meta:
+            meta['withdrawal_request']['status'] = 'APPROVED'
+            meta['withdrawal_request']['approved_at'] = timezone.now().isoformat()
+            meta['withdrawal_request']['approved_by'] = withdrawn_by
+
+        meta['withdrawal'] = {
+            'withdrawn_at': timezone.now().isoformat(),
+            'reason': reason,
+            'withdrawn_by': withdrawn_by,
+            'approved_from_request': bool(meta.get('withdrawal_request'))
+        }
+        consent.metadata = meta
+        consent.save()
+        return Response({"Success": True, "Message": "Consent revoked and status updated to WITHDRAWN successfully.", "status": consent.status})
+
+    @action(detail=True, methods=['post'])
+    def reject_withdrawal(self, request, pk=None):
+        """Allows SuperAdmin to reject or dismiss a pending consent revocation request"""
+        consent = self.get_object()
+        remarks = request.data.get('remarks', 'Revocation request rejected/dismissed by SuperAdmin')
+        rejected_by = request.data.get('rejected_by', 'SuperAdmin')
+        consent.status = 'ACTIVE'
+        meta = consent.metadata or {}
+        if 'withdrawal_request' in meta:
+            meta['withdrawal_request']['status'] = 'REJECTED'
+            meta['withdrawal_request']['rejected_at'] = timezone.now().isoformat()
+            meta['withdrawal_request']['rejected_by'] = rejected_by
+            meta['withdrawal_request']['remarks'] = remarks
+        consent.metadata = meta
+        consent.save()
+        return Response({"Success": True, "Message": "Revocation request rejected. Consent remains ACTIVE.", "status": consent.status})
+
+    @action(detail=False, methods=['get', 'post', 'patch'], url_path='my-consent')
+    def my_consent(self, request):
+        """Allows logged-in patient to view their DPDP consent record, update granular preferences, or submit a revocation request."""
+        user_info = getattr(request, 'user_info', {})
+        user_id = user_info.get('UserID') or request.query_params.get('user_id')
+        user_name = user_info.get('UserName')
+
+        user = None
+        if user_id:
+            user = User.objects.filter(id=user_id).first()
+        elif user_name:
+            user = User.objects.filter(user_name=user_name).first()
+
+        consent = None
+        if user:
+            # 1. Search by patient_id
+            consent = DPDPConsentLog.objects.filter(patient_id=user.id).order_by('-created_at').first()
+            # 2. If not found, search by patient_number
+            if not consent and user.mobile_number:
+                consent = DPDPConsentLog.objects.filter(patient_number=user.mobile_number).order_by('-created_at').first()
+            # 3. If not found, search by user ForeignKey
+            if not consent:
+                consent = DPDPConsentLog.objects.filter(user=user).order_by('-created_at').first()
+
+        if request.method == 'GET':
+            if not consent:
+                return Response({
+                    "Success": False,
+                    "Message": "No DPDP consent record found for this patient account.",
+                    "consent": None
+                }, status=status.HTTP_200_OK)
+            serializer = self.get_serializer(consent)
+            return Response({
+                "Success": True,
+                "consent": serializer.data
+            }, status=status.HTTP_200_OK)
+
+        elif request.method in ['POST', 'PATCH']:
+            action_type = request.data.get('action', 'update_preferences')
+
+            if not consent:
+                return Response({
+                    "Success": False,
+                    "Message": "No active consent record found to update."
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            # Patient triggers a withdrawal request -> DOES NOT directly revoke. Sets PENDING_WITHDRAWAL for SuperAdmin approval!
+            if action_type in ['withdraw', 'request_withdrawal']:
+                reason = request.data.get('reason', 'Patient requested consent revocation via Privacy Hub')
+                consent.status = 'PENDING_WITHDRAWAL'
+                meta = consent.metadata or {}
+                meta['withdrawal_request'] = {
+                    'requested_at': timezone.now().isoformat(),
+                    'reason': reason,
+                    'patient_id': user.id if user else None,
+                    'patient_name': user.full_name or user.user_name if user else None,
+                    'patient_mobile': user.mobile_number if user else consent.patient_number,
+                    'status': 'PENDING'
+                }
+                consent.metadata = meta
+                consent.save()
+                serializer = self.get_serializer(consent)
+                return Response({
+                    "Success": True,
+                    "Message": "Your consent revocation request has been submitted. It is now pending review and approval by the SuperAdmin / Data Protection Officer.",
+                    "consent": serializer.data
+                }, status=status.HTTP_200_OK)
+
+            elif action_type == 'cancel_withdrawal_request':
+                if consent.status == 'PENDING_WITHDRAWAL':
+                    consent.status = 'ACTIVE'
+                    meta = consent.metadata or {}
+                    if 'withdrawal_request' in meta:
+                        meta['withdrawal_request']['status'] = 'CANCELLED'
+                        meta['withdrawal_request']['cancelled_at'] = timezone.now().isoformat()
+                    consent.metadata = meta
+                    consent.save()
+                serializer = self.get_serializer(consent)
+                return Response({
+                    "Success": True,
+                    "Message": "Revocation request cancelled. Your consent remains Active.",
+                    "consent": serializer.data
+                }, status=status.HTTP_200_OK)
+
+            elif action_type == 'update_preferences':
+                optional_prefs = request.data.get('optional_preferences', {})
+                purposes = consent.consented_purposes or {}
+                opt_dict = purposes.get('optional', {})
+
+                # Update matching clauses in the optional dictionary
+                for clause_key in list(opt_dict.keys()):
+                    key_lower = clause_key.lower()
+                    if 'research' in key_lower and 'research' in optional_prefs:
+                        opt_dict[clause_key] = bool(optional_prefs['research'])
+                    elif ('offer' in key_lower or 'marketing' in key_lower) and 'marketing' in optional_prefs:
+                        opt_dict[clause_key] = bool(optional_prefs['marketing'])
+                    elif ('retention' in key_lower or 'period' in key_lower) and 'retention' in optional_prefs:
+                        opt_dict[clause_key] = bool(optional_prefs['retention'])
+
+                purposes['optional'] = opt_dict
+                consent.consented_purposes = purposes
+
+                # Append audit entry to metadata
+                meta = consent.metadata or {}
+                history = meta.get('preference_history', [])
+                history.append({
+                    'updated_at': timezone.now().isoformat(),
+                    'updated_by': f"Patient ({user.full_name or user.user_name if user else 'Self'})",
+                    'preferences': optional_prefs
+                })
+                meta['preference_history'] = history
+                consent.metadata = meta
+                consent.save()
+
+                serializer = self.get_serializer(consent)
+                return Response({
+                    "Success": True,
+                    "Message": "Privacy preferences updated successfully.",
+                    "consent": serializer.data
+                }, status=status.HTTP_200_OK)
+
+            return Response({"Success": False, "Message": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
 

@@ -1,4 +1,7 @@
+import uuid
+import datetime
 from django.db import models
+from django.utils import timezone
 from user_type.models import UserType
 
 class User(models.Model):
@@ -125,3 +128,131 @@ class VisitType(models.Model):
 
     def __str__(self):
         return self.visit_type_name
+
+
+def generate_consent_id():
+    date_str = timezone.now().strftime('%Y%m%d')
+    prefix = f"XRAI-DPDP-{date_str}-"
+    existing_today = DPDPConsentLog.objects.filter(consent_id__startswith=prefix).values_list('consent_id', flat=True)
+    max_seq = 0
+    for cid in existing_today:
+        try:
+            suffix = cid.split('-')[-1]
+            num = int(suffix)
+            if num > max_seq:
+                max_seq = num
+        except (ValueError, IndexError):
+            pass
+
+    new_seq = max_seq + 1
+    while DPDPConsentLog.objects.filter(consent_id=f"{prefix}{new_seq}").exists():
+        new_seq += 1
+
+    return f"{prefix}{new_seq}"
+
+
+class DPDPConsentLog(models.Model):
+    STATUS_CHOICES = (
+        ('ACTIVE', 'Active'),
+        ('PENDING_WITHDRAWAL', 'Pending Withdrawal'),
+        ('WITHDRAWN', 'Withdrawn'),
+        ('EXPIRED', 'Expired'),
+    )
+
+    consent_id = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text="Unique verifiable consent reference (e.g. XRAI-DPDP-YYYYMMDD-1)"
+    )
+    user = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column='user_id',
+        related_name='dpdp_consent_logs',
+        help_text="Associated user account"
+    )
+    patient_number = models.CharField(
+        max_length=30,
+        db_index=True,
+        help_text="Patient mobile number or unique contact identifier"
+    )
+    patient_id = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Assigned User ID / Patient ID"
+    )
+    full_name = models.CharField(
+        max_length=200,
+        null=True,
+        blank=True,
+        help_text="Full name of the data principal"
+    )
+    email = models.EmailField(
+        null=True,
+        blank=True,
+        help_text="Email of the data principal"
+    )
+    shared_otp = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="The OTP verified by the user to authenticate and record consent"
+    )
+    notice_version = models.CharField(
+        max_length=50,
+        default='DPDP-1.0',
+        help_text="Version of DPDP Notice and Consent Request"
+    )
+    notice_title = models.CharField(
+        max_length=255,
+        default='Digital Personal Data Protection Act, 2023 Consent Notice'
+    )
+    consent_timestamp = models.DateTimeField(
+        default=timezone.now,
+        help_text="Timestamp when the user accepted consent on the notice"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        help_text="Server audit timestamp when record was persisted"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='ACTIVE',
+        db_index=True
+    )
+    consented_purposes = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Granular consent selections with full clause sentences"
+    )
+    consent_statement = models.TextField(
+        default="I hereby consent to collection and processing of my data for availing Diagnostic Services and relevant services in the manner described in the notice here."
+    )
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Extra contextual audit metadata (channel, device, referrer, withdrawal history)"
+    )
+
+    class Meta:
+        db_table = 'dpdp_consent_logs'
+        verbose_name = 'DPDP Consent Log'
+        verbose_name_plural = 'DPDP Consent Logs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['consent_id']),
+            models.Index(fields=['patient_number']),
+            models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.consent_id} | {self.patient_number} | {self.status}"

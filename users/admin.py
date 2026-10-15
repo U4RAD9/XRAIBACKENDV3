@@ -1,10 +1,41 @@
+import json
+from django import forms
 from django.contrib import admin
 from .models import (
     User,
     LegacyPermission,
     VisitType,
     UserLocationHistory,
+    DPDPConsentLog,
 )
+
+
+class PrettyJSONWidget(forms.Textarea):
+    def format_value(self, value):
+        if value is None or value == "":
+            return ""
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except Exception:
+                return value
+        return json.dumps(value, indent=2, ensure_ascii=False)
+
+
+class DPDPConsentLogForm(forms.ModelForm):
+    class Meta:
+        model = DPDPConsentLog
+        fields = '__all__'
+        widgets = {
+            'consented_purposes': PrettyJSONWidget(attrs={
+                'rows': 18,
+                'style': 'font-family: Consolas, Monaco, monospace; font-size: 13px; line-height: 1.5; width: 100%; white-space: pre-wrap; padding: 10px; border-radius: 6px;'
+            }),
+            'metadata': PrettyJSONWidget(attrs={
+                'rows': 6,
+                'style': 'font-family: Consolas, Monaco, monospace; font-size: 13px; line-height: 1.5; width: 100%; white-space: pre-wrap; padding: 10px; border-radius: 6px;'
+            }),
+        }
 
 
 @admin.register(User)
@@ -104,3 +135,38 @@ class VisitTypeAdmin(admin.ModelAdmin):
     )
 
     ordering = ("visit_type_id",)
+
+
+@admin.register(DPDPConsentLog)
+class DPDPConsentLogAdmin(admin.ModelAdmin):
+    form = DPDPConsentLogForm
+    list_display = (
+        "consent_id",
+        "patient_id",
+        "patient_number",
+        "full_name",
+        "shared_otp",
+        "status",
+        "notice_version",
+        "consent_timestamp",
+        "created_at",
+    )
+    list_filter = (
+        "status",
+        "notice_version",
+        "created_at",
+    )
+    search_fields = (
+        "consent_id",
+        "patient_number",
+        "patient_id",
+        "full_name",
+        "email",
+        "shared_otp",
+    )
+    readonly_fields = (
+        "consent_id",
+        "created_at",
+        "updated_at",
+    )
+    ordering = ("-created_at",)

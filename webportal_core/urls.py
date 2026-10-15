@@ -4,7 +4,7 @@ from rest_framework.routers import DefaultRouter
 from django.conf import settings
 from django.conf.urls.static import static
 
-from users.views import (UserViewSet,
+from users.views import (UserViewSet, DPDPConsentLogViewSet,
                             send_otp, verify_otp, signup, authenticate_user,
                             forget_mpin, get_visitor_mpin, employee_login,
                             update_password, tracking_api, send_login_otp, login_with_otp)
@@ -40,6 +40,7 @@ router.register(r'slot-master', SlotMasterViewSet)
 router.register(r'patients', PatientViewSet)
 router.register(r'slot-booking-master', SlotBookingMasterViewSet)
 router.register(r'slot-booking-details', SlotBookingDetailsViewSet)
+router.register(r'dpdp-consents', DPDPConsentLogViewSet, basename='dpdp-consents')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
