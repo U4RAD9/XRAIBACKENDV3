@@ -14,6 +14,9 @@ import random
 import traceback
 import requests
 import threading
+import csv
+from django.http import HttpResponse
+from django.db.models import Q
 from django.utils import timezone
 
 def send_sms_background(url, headers, payload):
@@ -33,6 +36,18 @@ class UserViewSet(viewsets.ModelViewSet):
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.SearchFilter]
     search_fields = ['user_name', 'mobile_number', 'full_name', 'email']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user_info = getattr(self.request, 'user_info', {})
+        u_type = (user_info.get('UserType') or '').lower()
+        if u_type in ['consultant admin', 'consultant_admin', 'consultantadmin']:
+            # Consultant Admin strictly sees Consultant and Consultant Admin user accounts
+            qs = qs.filter(user_type__user_type_name__in=['Consultant', 'Consultant Admin'])
+        user_type_param = self.request.query_params.get('user_type')
+        if user_type_param:
+            qs = qs.filter(user_type__user_type_name__iexact=user_type_param)
+        return qs
 
     def _prepare_data(self, data):
         data = data.copy()
@@ -60,6 +75,13 @@ class UserViewSet(viewsets.ModelViewSet):
         return data
 
     def create(self, request, *args, **kwargs):
+        user_info = getattr(request, 'user_info', {})
+        u_type = (user_info.get('UserType') or '').lower()
+        if u_type in ['consultant admin', 'consultant_admin', 'consultantadmin']:
+            req_type = request.data.get('userType')
+            if req_type and req_type not in ['Consultant', 'Consultant Admin']:
+                return Response({"Success": False, "Message": "Consultant Admin can only manage Consultant accounts."}, status=status.HTTP_403_FORBIDDEN)
+
         data = self._prepare_data(request.data)
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
@@ -245,15 +267,18 @@ def signup(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def authenticate_user(request):
-    mobile_or_username = request.data.get('MobileNumber')
-    mpin = request.data.get('MPIN')
+    mobile_or_username = request.data.get('MobileNumber') or request.data.get('username')
+    mpin = request.data.get('MPIN') or request.data.get('password')
+
+    if not mobile_or_username or not mpin:
+        return Response({"Success": False, "message": "Username / Mobile number and password are required."}, status=status.HTTP_200_OK)
 
     try:
         from django.db import models
         user = User.objects.filter(models.Q(mobile_number=mobile_or_username) | models.Q(user_name=mobile_or_username)).first()
         
         if not user:
-            return Response({"Success": False, "message": "Mobile number is not registered."}, status=status.HTTP_200_OK)
+            return Response({"Success": False, "message": "Mobile number or username is not registered."}, status=status.HTTP_200_OK)
 
         if user.mpin == mpin or user.password == mpin:
             from django.core import signing
@@ -689,16 +714,16 @@ def consultant_exam_api(request):
             "Message": "Consultant user authentication required."
         }, status=status.HTTP_401_UNAUTHORIZED)
 
-    exam_response, created = ConsultantExamResponse.objects.get_or_create(
-        user=user,
-        defaults={
-            'exam_title': 'Primary Care Clinical Examination Module',
-            'answers': {},
-            'current_view': 'intro',
-            'status': 'DRAFT',
-            'progress_stats': {},
-        }
-    )
+    exam_response = ConsultantExamResponse.objects.filter(user=user).order_by('-last_saved_at').first()
+    if not exam_response:
+        exam_response = ConsultantExamResponse.objects.create(
+            user=user,
+            exam_title='Primary Care Clinical Examination Module',
+            answers={},
+            current_view='intro',
+            status='DRAFT',
+            progress_stats={},
+        )
 
     if request.method == 'GET':
         return Response({
@@ -775,7 +800,9 @@ def consultant_exam_submit(request):
             "Message": "Consultant user authentication required."
         }, status=status.HTTP_401_UNAUTHORIZED)
 
-    exam_response, created = ConsultantExamResponse.objects.get_or_create(user=user)
+    exam_response = ConsultantExamResponse.objects.filter(user=user).order_by('-last_saved_at').first()
+    if not exam_response:
+        exam_response = ConsultantExamResponse.objects.create(user=user)
 
     answers_data = request.data.get('answers')
     if answers_data is not None:
@@ -804,31 +831,230 @@ def consultant_exam_submit(request):
 @permission_classes([AllowAny])
 def consultant_submissions_list(request):
     """
-    List all consultant examination submissions for admin/superadmin inspection.
+    List all consultant examination submissions with filtering, search, and activity metrics.
     """
-    submissions = ConsultantExamResponse.objects.select_related('user').all().order_by('-last_saved_at')
+    qs = ConsultantExamResponse.objects.select_related('user', 'evaluated_by').all()
+
+    # Search filter
+    search_q = request.query_params.get('search', '').strip()
+    if search_q:
+        qs = qs.filter(
+            Q(user__user_name__icontains=search_q) |
+            Q(user__full_name__icontains=search_q) |
+            Q(user__mobile_number__icontains=search_q) |
+            Q(admin_notes__icontains=search_q)
+        )
+
+    # Status filter
+    status_filter = request.query_params.get('status', '').strip().upper()
+    if status_filter and status_filter != 'ALL':
+        qs = qs.filter(status=status_filter)
+
+    # Ordering
+    order_by = request.query_params.get('ordering', '-last_saved_at')
+    valid_orders = ['-last_saved_at', 'last_saved_at', '-submitted_at', 'submitted_at', '-started_at', 'started_at', 'status', '-status']
+    if order_by in valid_orders:
+        qs = qs.order_by(order_by)
+    else:
+        qs = qs.order_by('-last_saved_at')
+
+    # Metrics computation across all consultant exams
+    all_responses = ConsultantExamResponse.objects.all()
+    total_consultants = User.objects.filter(user_type__user_type_name='Consultant').count()
+    total_submissions = all_responses.count()
+    submitted_count = all_responses.filter(status='SUBMITTED').count()
+    draft_count = all_responses.filter(status='DRAFT').count()
+    evaluated_count = all_responses.filter(status__in=['EVALUATED', 'APPROVED']).count()
+
+    total_coverage = 0
+    covered_items = 0
+    for r in all_responses:
+        stats = r.progress_stats or {}
+        pct = stats.get('percent', 0)
+        total_coverage += pct
+        covered_items += 1
+    avg_coverage = round(total_coverage / covered_items, 1) if covered_items > 0 else 0
+
     results = []
-    for s in submissions:
+    for s in qs:
+        stats = s.progress_stats or {}
         results.append({
             "id": s.id,
             "user_id": s.user.id if s.user else None,
             "username": s.user.user_name if s.user else 'Unknown',
-            "full_name": s.user.full_name if s.user else '',
+            "full_name": s.user.full_name or (s.user.user_name if s.user else ''),
             "mobile_number": s.user.mobile_number if s.user else '',
             "status": s.status,
             "current_view": s.current_view,
-            "progress_stats": s.progress_stats,
+            "progress_stats": stats,
+            "completed_cases": stats.get('completed_cases', 0),
+            "total_cases": stats.get('total_cases', 13),
+            "percent": stats.get('percent', 0),
+            "answered_count": len(s.answers.keys()) if isinstance(s.answers, dict) else 0,
+            "admin_notes": s.admin_notes or '',
+            "evaluated_at": s.evaluated_at.isoformat() if s.evaluated_at else None,
+            "evaluated_by_name": s.evaluated_by.full_name or s.evaluated_by.user_name if s.evaluated_by else None,
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "last_saved_at": s.last_saved_at.isoformat() if s.last_saved_at else None,
             "submitted_at": s.submitted_at.isoformat() if s.submitted_at else None,
-            "compiled_summary": s.compiled_summary,
-            "answers": s.answers,
         })
+
     return Response({
         "Success": True,
+        "Metrics": {
+            "total_consultants": total_consultants,
+            "total_submissions": total_submissions,
+            "submitted_count": submitted_count,
+            "draft_count": draft_count,
+            "evaluated_count": evaluated_count,
+            "avg_coverage": avg_coverage,
+        },
         "Total": len(results),
         "Submissions": results
     }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET', 'PATCH', 'DELETE'])
+@permission_classes([AllowAny])
+def consultant_submission_detail(request, id):
+    """
+    Retrieve full details, update evaluation status / notes, or delete a consultant submission.
+    """
+    submission = ConsultantExamResponse.objects.select_related('user', 'evaluated_by').filter(id=id).first()
+    if not submission:
+        return Response({"Success": False, "Message": "Consultant submission not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == 'GET':
+        return Response({
+            "Success": True,
+            "submission": {
+                "id": submission.id,
+                "user_id": submission.user.id if submission.user else None,
+                "username": submission.user.user_name if submission.user else 'Unknown',
+                "full_name": submission.user.full_name or (submission.user.user_name if submission.user else ''),
+                "mobile_number": submission.user.mobile_number if submission.user else '',
+                "email": submission.user.email if submission.user else '',
+                "exam_title": submission.exam_title,
+                "status": submission.status,
+                "current_view": submission.current_view,
+                "progress_stats": submission.progress_stats or {},
+                "answers": submission.answers or {},
+                "compiled_summary": submission.compiled_summary or '',
+                "admin_notes": submission.admin_notes or '',
+                "evaluated_at": submission.evaluated_at.isoformat() if submission.evaluated_at else None,
+                "evaluated_by_name": submission.evaluated_by.full_name or submission.evaluated_by.user_name if submission.evaluated_by else None,
+                "started_at": submission.started_at.isoformat() if submission.started_at else None,
+                "last_saved_at": submission.last_saved_at.isoformat() if submission.last_saved_at else None,
+                "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
+            }
+        }, status=status.HTTP_200_OK)
+
+    elif request.method == 'PATCH':
+        new_status = request.data.get('status')
+        admin_notes = request.data.get('admin_notes')
+
+        if new_status and new_status in dict(ConsultantExamResponse.STATUS_CHOICES):
+            submission.status = new_status
+            if new_status in ['EVALUATED', 'APPROVED']:
+                submission.evaluated_at = timezone.now()
+                user_info = getattr(request, 'user_info', {})
+                eval_user_id = user_info.get('UserID')
+                if eval_user_id:
+                    submission.evaluated_by = User.objects.filter(id=eval_user_id).first()
+            elif new_status == 'DRAFT':
+                submission.submitted_at = None
+
+        if admin_notes is not None:
+            submission.admin_notes = admin_notes
+
+        submission.save()
+
+        return Response({
+            "Success": True,
+            "Message": "Submission updated successfully.",
+            "status": submission.status,
+            "admin_notes": submission.admin_notes,
+            "evaluated_at": submission.evaluated_at.isoformat() if submission.evaluated_at else None,
+        }, status=status.HTTP_200_OK)
+
+    elif request.method == 'DELETE':
+        submission.delete()
+        return Response({"Success": True, "Message": "Consultant submission deleted successfully."}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def consultant_submission_download(request, id):
+    """
+    Download a single consultant submission as a formatted text file.
+    """
+    submission = ConsultantExamResponse.objects.select_related('user').filter(id=id).first()
+    if not submission:
+        return Response({"Success": False, "Message": "Consultant submission not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    doc_name = (submission.user.full_name or submission.user.user_name or "Consultant").replace(' ', '_')
+    summary_text = submission.compiled_summary
+    if not summary_text:
+        summary_text = f"Consultant: Dr. {doc_name}\nStatus: {submission.status}\nLast Saved: {submission.last_saved_at}\n\n(No compiled summary text available.)"
+
+    response = HttpResponse(summary_text, content_type='text/plain; charset=utf-8')
+    filename = f"Consultant_Evaluation_{doc_name}_{submission.last_saved_at.strftime('%Y%m%d') if submission.last_saved_at else 'report'}.txt"
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def consultant_submissions_export_csv(request):
+    """
+    Export all consultant submissions to CSV format for download.
+    """
+    submissions = ConsultantExamResponse.objects.select_related('user', 'evaluated_by').all().order_by('-last_saved_at')
+
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="Consultant_Evaluations_Summary_{timezone.now().strftime("%Y%m%d_%H%M")}.csv"'
+
+    writer = csv.writer(response)
+    writer.writerow([
+        "Submission ID",
+        "Username",
+        "Doctor Full Name",
+        "Mobile Number",
+        "Status",
+        "Completed Cases",
+        "Total Cases",
+        "Coverage (%)",
+        "Current Tab",
+        "Started At",
+        "Last Saved At",
+        "Submitted At",
+        "Evaluated At",
+        "Evaluated By",
+        "Admin Notes"
+    ])
+
+    for s in submissions:
+        stats = s.progress_stats or {}
+        writer.writerow([
+            s.id,
+            s.user.user_name if s.user else '',
+            s.user.full_name if s.user else '',
+            s.user.mobile_number if s.user else '',
+            s.status,
+            stats.get('completed_cases', 0),
+            stats.get('total_cases', 13),
+            f"{stats.get('percent', 0)}%",
+            s.current_view,
+            s.started_at.strftime('%Y-%m-%d %H:%M:%S') if s.started_at else '',
+            s.last_saved_at.strftime('%Y-%m-%d %H:%M:%S') if s.last_saved_at else '',
+            s.submitted_at.strftime('%Y-%m-%d %H:%M:%S') if s.submitted_at else '',
+            s.evaluated_at.strftime('%Y-%m-%d %H:%M:%S') if s.evaluated_at else '',
+            s.evaluated_by.full_name or s.evaluated_by.user_name if s.evaluated_by else '',
+            s.admin_notes or ''
+        ])
+
+    return response
+
 
 
 

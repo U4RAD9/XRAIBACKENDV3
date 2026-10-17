@@ -190,6 +190,10 @@ class ConsultantExamResponseForm(forms.ModelForm):
                 'rows': 12,
                 'style': 'font-family: Consolas, Monaco, monospace; font-size: 12px; line-height: 1.4; width: 100%; white-space: pre-wrap; padding: 10px; border-radius: 6px;'
             }),
+            'admin_notes': forms.Textarea(attrs={
+                'rows': 4,
+                'style': 'font-family: sans-serif; font-size: 13px; line-height: 1.5; width: 100%; padding: 10px; border-radius: 6px;'
+            }),
         }
 
 
@@ -204,18 +208,22 @@ class ConsultantExamResponseAdmin(admin.ModelAdmin):
         "current_view",
         "last_saved_at",
         "submitted_at",
+        "evaluated_at",
+        "evaluated_by",
         "started_at",
     )
     list_filter = (
         "status",
         "last_saved_at",
         "submitted_at",
+        "evaluated_at",
     )
     search_fields = (
         "user__user_name",
         "user__full_name",
         "user__mobile_number",
         "exam_title",
+        "admin_notes",
     )
     readonly_fields = (
         "started_at",

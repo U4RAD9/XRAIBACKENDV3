@@ -263,6 +263,7 @@ class ConsultantExamResponse(models.Model):
         ('DRAFT', 'In Progress / Draft'),
         ('SUBMITTED', 'Submitted'),
         ('EVALUATED', 'Evaluated'),
+        ('APPROVED', 'Approved'),
     )
 
     id = models.AutoField(primary_key=True)
@@ -300,6 +301,20 @@ class ConsultantExamResponse(models.Model):
         blank=True,
         null=True,
         help_text="Compiled human-readable text of all answers"
+    )
+    admin_notes = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Administrative notes or evaluation feedback on this consultant submission"
+    )
+    evaluated_at = models.DateTimeField(null=True, blank=True)
+    evaluated_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='evaluated_consultant_exams',
+        help_text="Admin user who evaluated or approved this submission"
     )
     started_at = models.DateTimeField(auto_now_add=True)
     last_saved_at = models.DateTimeField(auto_now=True)

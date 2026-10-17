@@ -8,7 +8,8 @@ from users.views import (UserViewSet, DPDPConsentLogViewSet,
                             send_otp, verify_otp, signup, authenticate_user,
                             forget_mpin, get_visitor_mpin, employee_login,
                             update_password, tracking_api, send_login_otp, login_with_otp,
-                            consultant_exam_api, consultant_exam_submit, consultant_submissions_list)
+                            consultant_exam_api, consultant_exam_submit, consultant_submissions_list,
+                            consultant_submission_detail, consultant_submission_download, consultant_submissions_export_csv)
 from user_type.views import UserTypeViewSet
 from otp_master.views import OtpMasterViewSet
 from locations.views import LocationViewSet
@@ -78,6 +79,9 @@ urlpatterns = [
     path('api/consultant/exam/', consultant_exam_api, name='consultant_exam_api'),
     path('api/consultant/exam/submit/', consultant_exam_submit, name='consultant_exam_submit'),
     path('api/consultant/submissions/', consultant_submissions_list, name='consultant_submissions_list'),
+    path('api/consultant/submissions/<int:id>/', consultant_submission_detail, name='consultant_submission_detail'),
+    path('api/consultant/submissions/<int:id>/download/', consultant_submission_download, name='consultant_submission_download'),
+    path('api/consultant/submissions/export-csv/', consultant_submissions_export_csv, name='consultant_submissions_export_csv'),
 ]
 
 if settings.DEBUG:

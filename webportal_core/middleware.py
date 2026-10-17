@@ -61,13 +61,15 @@ class BlockBrowserAPIAccessMiddleware:
                     return HttpResponseForbidden("You do not have permission to access this resource.")
             
             elif user_type == 'admin':
-                # Admins have access to operational resources, but not SuperAdmin consent governance
+                # Admins have access to operational resources, but not SuperAdmin consent governance or Consultant Admin
                 if request.path.startswith('/api/dpdp-consents'):
                     return HttpResponseForbidden("SuperAdmin access required.")
+                if request.path.startswith('/api/consultant/submissions'):
+                    return HttpResponseForbidden("Consultant Admin access required.")
                 pass
 
             elif user_type == 'superadmin':
-                # SuperAdmins have access to governance resources, but not operational admin resources
+                # SuperAdmins strictly have access to DPDP consent governance resources
                 allowed_paths = [
                     '/api/dpdp-consents',
                     '/api/tracking'
@@ -76,10 +78,22 @@ class BlockBrowserAPIAccessMiddleware:
                 if not is_allowed:
                     return HttpResponseForbidden("Admin operational access required.")
 
+            elif user_type in ['consultant admin', 'consultant_admin', 'consultantadmin']:
+                # Dedicated Consultant Admin role: manages consultant evaluations, dossiers, and doctor accounts
+                allowed_paths = [
+                    '/api/consultant/submissions',
+                    '/api/users',
+                    '/api/user-types',
+                    '/api/tracking'
+                ]
+                is_allowed = any(request.path.startswith(path) for path in allowed_paths)
+                if not is_allowed:
+                    return HttpResponseForbidden("Consultant Admin does not have permission to access operational clinic resources.")
+
             elif user_type == 'consultant':
                 # Allowed paths for Consultant exam portal
                 allowed_paths = [
-                    '/api/consultant',
+                    '/api/consultant/exam',
                     '/api/tracking'
                 ]
                 is_allowed = any(request.path.startswith(path) for path in allowed_paths)
