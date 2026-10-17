@@ -7,7 +7,8 @@ from django.conf.urls.static import static
 from users.views import (UserViewSet, DPDPConsentLogViewSet,
                             send_otp, verify_otp, signup, authenticate_user,
                             forget_mpin, get_visitor_mpin, employee_login,
-                            update_password, tracking_api, send_login_otp, login_with_otp)
+                            update_password, tracking_api, send_login_otp, login_with_otp,
+                            consultant_exam_api, consultant_exam_submit, consultant_submissions_list)
 from user_type.views import UserTypeViewSet
 from otp_master.views import OtpMasterViewSet
 from locations.views import LocationViewSet
@@ -74,6 +75,9 @@ urlpatterns = [
     path('api/booking/dashboard_stats', get_dashboard_stats, name='dashboard_stats'),
     path('api/payment/create_order', create_order, name='create_order'),
     path('api/payment/verify', verify_payment, name='verify_payment'),
+    path('api/consultant/exam/', consultant_exam_api, name='consultant_exam_api'),
+    path('api/consultant/exam/submit/', consultant_exam_submit, name='consultant_exam_submit'),
+    path('api/consultant/submissions/', consultant_submissions_list, name='consultant_submissions_list'),
 ]
 
 if settings.DEBUG:

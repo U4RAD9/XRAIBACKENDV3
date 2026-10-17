@@ -25,7 +25,7 @@ def send_sms_background(url, headers, payload):
 from user_type.models import UserType
 from .serializers import UserSerializer, UserLocationHistorySerializer, DPDPConsentLogSerializer
 from otp_master.models import OtpMaster
-from .models import User, UserLocationHistory, DPDPConsentLog, generate_consent_id
+from .models import User, UserLocationHistory, DPDPConsentLog, generate_consent_id, ConsultantExamResponse
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-id')
@@ -50,8 +50,10 @@ class UserViewSet(viewsets.ModelViewSet):
             data['mpin'] = data['password']
         if 'username' in data:
             data['user_name'] = data['username']
-            if 'full_name' not in data:
-                data['full_name'] = data['username']
+        if 'fullName' in data and data['fullName']:
+            data['full_name'] = data['fullName']
+        elif 'full_name' not in data and 'username' in data:
+            data['full_name'] = data['username']
         if 'mobile' in data:
             data['mobile_number'] = data['mobile']
             
@@ -662,4 +664,171 @@ class DPDPConsentLogViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_200_OK)
 
             return Response({"Success": False, "Message": "Invalid action"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET', 'POST', 'PATCH'])
+@permission_classes([AllowAny])
+def consultant_exam_api(request):
+    """
+    Retrieves or saves the exam answers and progress for the authenticated Consultant.
+    """
+    user_info = getattr(request, 'user_info', {})
+    data_dict = request.data if hasattr(request, 'data') and isinstance(request.data, dict) else {}
+    user_id = user_info.get('UserID') or request.query_params.get('user_id') or data_dict.get('user_id')
+    user_name = user_info.get('UserName') or request.query_params.get('username') or data_dict.get('username') or data_dict.get('user_name')
+
+    user = None
+    if user_id:
+        user = User.objects.filter(id=user_id).first()
+    elif user_name:
+        user = User.objects.filter(user_name=user_name).first()
+
+    if not user:
+        return Response({
+            "Success": False,
+            "Message": "Consultant user authentication required."
+        }, status=status.HTTP_401_UNAUTHORIZED)
+
+    exam_response, created = ConsultantExamResponse.objects.get_or_create(
+        user=user,
+        defaults={
+            'exam_title': 'Primary Care Clinical Examination Module',
+            'answers': {},
+            'current_view': 'intro',
+            'status': 'DRAFT',
+            'progress_stats': {},
+        }
+    )
+
+    if request.method == 'GET':
+        return Response({
+            "Success": True,
+            "exam_id": exam_response.id,
+            "consultant": {
+                "id": user.id,
+                "user_name": user.user_name,
+                "full_name": user.full_name or user.user_name,
+                "email": user.email,
+                "mobile": user.mobile_number,
+            },
+            "answers": exam_response.answers or {},
+            "current_view": exam_response.current_view or 'intro',
+            "status": exam_response.status,
+            "progress_stats": exam_response.progress_stats or {},
+            "compiled_summary": exam_response.compiled_summary,
+            "last_saved_at": exam_response.last_saved_at.isoformat() if exam_response.last_saved_at else None,
+            "submitted_at": exam_response.submitted_at.isoformat() if exam_response.submitted_at else None,
+        }, status=status.HTTP_200_OK)
+
+    elif request.method in ['POST', 'PATCH']:
+        answers_data = request.data.get('answers')
+        current_view = request.data.get('current_view')
+        progress_stats = request.data.get('progress_stats')
+        compiled_summary = request.data.get('compiled_summary')
+        action = request.data.get('action')  # 'save' or 'submit'
+
+        if answers_data is not None:
+            exam_response.answers = answers_data
+        if current_view is not None:
+            exam_response.current_view = str(current_view)
+        if progress_stats is not None:
+            exam_response.progress_stats = progress_stats
+        if compiled_summary is not None:
+            exam_response.compiled_summary = compiled_summary
+
+        if action == 'submit':
+            exam_response.status = 'SUBMITTED'
+            exam_response.submitted_at = timezone.now()
+
+        exam_response.save()
+
+        return Response({
+            "Success": True,
+            "Message": "Exam packet submitted successfully." if action == 'submit' else "Exam answers saved successfully.",
+            "exam_id": exam_response.id,
+            "status": exam_response.status,
+            "last_saved_at": exam_response.last_saved_at.isoformat() if exam_response.last_saved_at else None,
+            "submitted_at": exam_response.submitted_at.isoformat() if exam_response.submitted_at else None,
+        }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def consultant_exam_submit(request):
+    """
+    Explicit submit endpoint for finalizing consultant exam submission.
+    """
+    user_info = getattr(request, 'user_info', {})
+    data_dict = request.data if hasattr(request, 'data') and isinstance(request.data, dict) else {}
+    user_id = user_info.get('UserID') or request.query_params.get('user_id') or data_dict.get('user_id')
+    user_name = user_info.get('UserName') or request.query_params.get('username') or data_dict.get('username') or data_dict.get('user_name')
+
+    user = None
+    if user_id:
+        user = User.objects.filter(id=user_id).first()
+    elif user_name:
+        user = User.objects.filter(user_name=user_name).first()
+
+    if not user:
+        return Response({
+            "Success": False,
+            "Message": "Consultant user authentication required."
+        }, status=status.HTTP_401_UNAUTHORIZED)
+
+    exam_response, created = ConsultantExamResponse.objects.get_or_create(user=user)
+
+    answers_data = request.data.get('answers')
+    if answers_data is not None:
+        exam_response.answers = answers_data
+    compiled_summary = request.data.get('compiled_summary')
+    if compiled_summary is not None:
+        exam_response.compiled_summary = compiled_summary
+    progress_stats = request.data.get('progress_stats')
+    if progress_stats is not None:
+        exam_response.progress_stats = progress_stats
+
+    exam_response.status = 'SUBMITTED'
+    exam_response.submitted_at = timezone.now()
+    exam_response.save()
+
+    return Response({
+        "Success": True,
+        "Message": "Exam packet submitted successfully.",
+        "exam_id": exam_response.id,
+        "status": exam_response.status,
+        "submitted_at": exam_response.submitted_at.isoformat(),
+    }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def consultant_submissions_list(request):
+    """
+    List all consultant examination submissions for admin/superadmin inspection.
+    """
+    submissions = ConsultantExamResponse.objects.select_related('user').all().order_by('-last_saved_at')
+    results = []
+    for s in submissions:
+        results.append({
+            "id": s.id,
+            "user_id": s.user.id if s.user else None,
+            "username": s.user.user_name if s.user else 'Unknown',
+            "full_name": s.user.full_name if s.user else '',
+            "mobile_number": s.user.mobile_number if s.user else '',
+            "status": s.status,
+            "current_view": s.current_view,
+            "progress_stats": s.progress_stats,
+            "started_at": s.started_at.isoformat() if s.started_at else None,
+            "last_saved_at": s.last_saved_at.isoformat() if s.last_saved_at else None,
+            "submitted_at": s.submitted_at.isoformat() if s.submitted_at else None,
+            "compiled_summary": s.compiled_summary,
+            "answers": s.answers,
+        })
+    return Response({
+        "Success": True,
+        "Total": len(results),
+        "Submissions": results
+    }, status=status.HTTP_200_OK)
+
+
 

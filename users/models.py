@@ -256,3 +256,63 @@ class DPDPConsentLog(models.Model):
 
     def __str__(self):
         return f"{self.consent_id} | {self.patient_number} | {self.status}"
+
+
+class ConsultantExamResponse(models.Model):
+    STATUS_CHOICES = (
+        ('DRAFT', 'In Progress / Draft'),
+        ('SUBMITTED', 'Submitted'),
+        ('EVALUATED', 'Evaluated'),
+    )
+
+    id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(
+        'users.User',
+        on_delete=models.CASCADE,
+        related_name='consultant_exam_responses',
+        help_text="The consultant user who answered this exam packet"
+    )
+    exam_title = models.CharField(
+        max_length=255,
+        default="Clinical Case Examination Packet"
+    )
+    answers = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Full dictionary of all answers keyed by question/case identifiers"
+    )
+    current_view = models.CharField(
+        max_length=50,
+        default='intro',
+        help_text="Last active view/tab of the consultant (e.g. intro, 1..13, closing)"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='DRAFT'
+    )
+    progress_stats = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Computed completion statistics (e.g. answered units, total units)"
+    )
+    compiled_summary = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Compiled human-readable text of all answers"
+    )
+    started_at = models.DateTimeField(auto_now_add=True)
+    last_saved_at = models.DateTimeField(auto_now=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'consultant_exam_responses'
+        ordering = ['-last_saved_at']
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['last_saved_at']),
+        ]
+
+    def __str__(self):
+        return f"Consultant {self.user.user_name} - {self.exam_title} ({self.status})"
+

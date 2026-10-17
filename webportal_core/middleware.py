@@ -76,6 +76,17 @@ class BlockBrowserAPIAccessMiddleware:
                 if not is_allowed:
                     return HttpResponseForbidden("Admin operational access required.")
 
+            elif user_type == 'consultant':
+                # Allowed paths for Consultant exam portal
+                allowed_paths = [
+                    '/api/consultant',
+                    '/api/tracking'
+                ]
+                is_allowed = any(request.path.startswith(path) for path in allowed_paths)
+                if not is_allowed:
+                    return HttpResponseForbidden("You do not have permission to access this resource.")
+
+
             
             elif user_type == 'technician':
                 # Allowed paths for Technician

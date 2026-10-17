@@ -7,6 +7,7 @@ from .models import (
     VisitType,
     UserLocationHistory,
     DPDPConsentLog,
+    ConsultantExamResponse,
 )
 
 
@@ -169,4 +170,56 @@ class DPDPConsentLogAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
     )
-    ordering = ("-created_at",)
+    ordering = ("-created_at",)
+
+
+class ConsultantExamResponseForm(forms.ModelForm):
+    class Meta:
+        model = ConsultantExamResponse
+        fields = '__all__'
+        widgets = {
+            'answers': PrettyJSONWidget(attrs={
+                'rows': 16,
+                'style': 'font-family: Consolas, Monaco, monospace; font-size: 13px; line-height: 1.5; width: 100%; white-space: pre-wrap; padding: 10px; border-radius: 6px;'
+            }),
+            'progress_stats': PrettyJSONWidget(attrs={
+                'rows': 5,
+                'style': 'font-family: Consolas, Monaco, monospace; font-size: 13px; line-height: 1.5; width: 100%; white-space: pre-wrap; padding: 10px; border-radius: 6px;'
+            }),
+            'compiled_summary': forms.Textarea(attrs={
+                'rows': 12,
+                'style': 'font-family: Consolas, Monaco, monospace; font-size: 12px; line-height: 1.4; width: 100%; white-space: pre-wrap; padding: 10px; border-radius: 6px;'
+            }),
+        }
+
+
+@admin.register(ConsultantExamResponse)
+class ConsultantExamResponseAdmin(admin.ModelAdmin):
+    form = ConsultantExamResponseForm
+    list_display = (
+        "id",
+        "user",
+        "exam_title",
+        "status",
+        "current_view",
+        "last_saved_at",
+        "submitted_at",
+        "started_at",
+    )
+    list_filter = (
+        "status",
+        "last_saved_at",
+        "submitted_at",
+    )
+    search_fields = (
+        "user__user_name",
+        "user__full_name",
+        "user__mobile_number",
+        "exam_title",
+    )
+    readonly_fields = (
+        "started_at",
+        "last_saved_at",
+    )
+    ordering = ("-last_saved_at",)
+
