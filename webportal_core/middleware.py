@@ -12,7 +12,7 @@ class BlockBrowserAPIAccessMiddleware:
                 return self.get_response(request)
 
             # 1. API URL Visible - Bypass public authentication endpoints
-            if request.path.startswith('/api/auth/'):
+            if request.path.startswith('/api/auth/') or request.path.startswith('/api/technician-onboarding/submit'):
                 return self.get_response(request)
 
             # 2. Authentication - Check for Bearer token
@@ -89,6 +89,18 @@ class BlockBrowserAPIAccessMiddleware:
                 is_allowed = any(request.path.startswith(path) for path in allowed_paths)
                 if not is_allowed:
                     return HttpResponseForbidden("Consultant Admin does not have permission to access operational clinic resources.")
+
+            elif user_type in ['technician admin', 'technician_admin', 'technicianadmin']:
+                # Dedicated Technician Admin role: manages technician onboarding applications, rates, and tracking
+                allowed_paths = [
+                    '/api/technician-onboarding/admin',
+                    '/api/tracking',
+                    '/api/users',
+                    '/api/locations',
+                ]
+                is_allowed = any(request.path.startswith(path) for path in allowed_paths)
+                if not is_allowed:
+                    return HttpResponseForbidden("Technician Admin does not have permission to access this resource.")
 
             elif user_type == 'consultant':
                 # Allowed paths for Consultant exam portal

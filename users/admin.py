@@ -8,6 +8,7 @@ from .models import (
     UserLocationHistory,
     DPDPConsentLog,
     ConsultantExamResponse,
+    TechnicianOnboarding,
 )
 
 
@@ -230,4 +231,37 @@ class ConsultantExamResponseAdmin(admin.ModelAdmin):
         "last_saved_at",
     )
     ordering = ("-last_saved_at",)
+
+
+@admin.register(TechnicianOnboarding)
+class TechnicianOnboardingAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "full_name",
+        "mobile_number",
+        "work_location",
+        "education_qualification",
+        "years_of_experience",
+        "agreed_rates",
+        "email_sent",
+        "status",
+        "created_at",
+    )
+    list_filter = (
+        "status",
+        "years_of_experience",
+        "created_at",
+    )
+    search_fields = (
+        "full_name",
+        "mobile_number",
+        "email",
+        "city",
+        "address",
+        "work_location",
+        "education_qualification",
+    )
+    readonly_fields = ("created_at", "updated_at")
+    ordering = ("-created_at",)
+
 

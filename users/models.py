@@ -331,3 +331,59 @@ class ConsultantExamResponse(models.Model):
     def __str__(self):
         return f"Consultant {self.user.user_name} - {self.exam_title} ({self.status})"
 
+
+
+class TechnicianOnboarding(models.Model):
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending Review'),
+        ('APPROVED', 'Approved / Working'),
+        ('REJECTED', 'Rejected'),
+    ]
+
+    full_name = models.CharField(max_length=255)
+    mobile_number = models.CharField(max_length=20, db_index=True)
+    email = models.EmailField(blank=True, null=True)
+    gender = models.CharField(max_length=20)
+    dob = models.DateField(null=True, blank=True)
+    address = models.TextField()
+    city = models.CharField(max_length=100, blank=True, null=True)
+    state = models.CharField(max_length=100, blank=True, null=True)
+    pincode = models.CharField(max_length=20, blank=True, null=True)
+    work_location = models.CharField(max_length=255, help_text="Current location of work")
+    skills = models.JSONField(default=list, blank=True, help_text="Skills / Area of work list")
+    education_qualification = models.CharField(max_length=255)
+    years_of_experience = models.CharField(max_length=50)
+    experience_details = models.TextField(blank=True, null=True)
+    photo = models.FileField(upload_to='technician_onboarding/photos/', blank=True, null=True)
+    live_photo = models.FileField(upload_to='technician_onboarding/live_photos/', blank=True, null=True)
+    account_holder_name = models.CharField(max_length=255, blank=True, null=True)
+    bank_name = models.CharField(max_length=255, blank=True, null=True)
+    account_number = models.CharField(max_length=100, blank=True, null=True)
+    ifsc_code = models.CharField(max_length=50, blank=True, null=True)
+    branch_name = models.CharField(max_length=255, blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', db_index=True)
+    agreed_rates = models.TextField(blank=True, null=True, help_text="Agreed rates / payout terms for technician")
+    admin_notes = models.TextField(blank=True, null=True)
+    email_sent = models.BooleanField(default=False)
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_technician_onboardings'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'technician_onboardings'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['mobile_number']),
+        ]
+
+    def __str__(self):
+        return f"{self.full_name} ({self.mobile_number}) - {self.status}"

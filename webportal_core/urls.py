@@ -9,7 +9,7 @@ from users.views import (UserViewSet, DPDPConsentLogViewSet,
                             forget_mpin, get_visitor_mpin, employee_login,
                             update_password, tracking_api, send_login_otp, login_with_otp,
                             consultant_exam_api, consultant_exam_submit, consultant_submissions_list,
-                            consultant_submission_detail, consultant_submission_download, consultant_submissions_export_csv)
+                            consultant_submission_detail, consultant_submission_download, consultant_submissions_export_csv, submit_technician_onboarding, admin_technician_onboardings)
 from user_type.views import UserTypeViewSet
 from otp_master.views import OtpMasterViewSet
 from locations.views import LocationViewSet
@@ -82,6 +82,10 @@ urlpatterns = [
     path('api/consultant/submissions/<int:id>/', consultant_submission_detail, name='consultant_submission_detail'),
     path('api/consultant/submissions/<int:id>/download/', consultant_submission_download, name='consultant_submission_download'),
     path('api/consultant/submissions/export-csv/', consultant_submissions_export_csv, name='consultant_submissions_export_csv'),
+    path('api/technician-onboarding/submit', submit_technician_onboarding, name='submit_technician_onboarding'),
+    path('api/technician-onboarding/submit/', submit_technician_onboarding, name='submit_technician_onboarding_slash'),
+    path('api/technician-onboarding/admin', admin_technician_onboardings, name='admin_technician_onboardings'),
+    path('api/technician-onboarding/admin/', admin_technician_onboardings, name='admin_technician_onboardings_slash'),
 ]
 
 if settings.DEBUG:

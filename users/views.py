@@ -18,6 +18,7 @@ import csv
 from django.http import HttpResponse
 from django.db.models import Q
 from django.utils import timezone
+from django.core.mail import EmailMultiAlternatives
 
 def send_sms_background(url, headers, payload):
     try:
@@ -26,9 +27,9 @@ def send_sms_background(url, headers, payload):
         print(f"Error sending SMS: {e}")
 
 from user_type.models import UserType
-from .serializers import UserSerializer, UserLocationHistorySerializer, DPDPConsentLogSerializer
+from .serializers import UserSerializer, UserLocationHistorySerializer, DPDPConsentLogSerializer, TechnicianOnboardingSerializer
 from otp_master.models import OtpMaster
-from .models import User, UserLocationHistory, DPDPConsentLog, generate_consent_id, ConsultantExamResponse
+from .models import User, UserLocationHistory, DPDPConsentLog, generate_consent_id, ConsultantExamResponse, TechnicianOnboarding
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by('-id')
@@ -1083,3 +1084,326 @@ def consultant_submissions_export_csv(request):
 
 
 
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def submit_technician_onboarding(request):
+    try:
+        data = request.data.copy()
+        
+        full_name = data.get('full_name', '').strip()
+        mobile_number = data.get('mobile_number', '').strip()
+        address = data.get('address', '').strip()
+        
+        if not full_name or not mobile_number or not address:
+            return Response({
+                'Success': False,
+                'Message': 'Full Name, Mobile Number, and Address are required.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        import json
+        skills_raw = data.get('skills')
+        if skills_raw:
+            if isinstance(skills_raw, str):
+                try:
+                    json.loads(skills_raw)
+                except Exception:
+                    items = [s.strip() for s in skills_raw.split(',') if s.strip()]
+                    data['skills'] = json.dumps(items)
+            elif isinstance(skills_raw, list):
+                data['skills'] = json.dumps(skills_raw)
+
+        serializer = TechnicianOnboardingSerializer(data=data)
+        if serializer.is_valid():
+            onboarding = serializer.save()
+            return Response({
+                'Success': True,
+                'Message': 'Application submitted successfully! Our team will review your application shortly.',
+                'id': onboarding.id,
+                'status': onboarding.status
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response({
+                'Success': False,
+                'Message': 'Validation failed',
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    except Exception as e:
+        return Response({
+            'Success': False,
+            'Message': f"Submission error: {str(e)}"
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def send_technician_confirmation_email(app, agreed_rates=None, custom_message=None):
+    if not app.email:
+        raise ValueError("Technician does not have an email address provided.")
+    
+    import json
+    rates_raw = agreed_rates or app.agreed_rates
+    rates_list = []
+    rates_is_tabular = False
+
+    if rates_raw:
+        if isinstance(rates_raw, list):
+            rates_list = rates_raw
+            rates_is_tabular = True
+        elif isinstance(rates_raw, str):
+            try:
+                parsed = json.loads(rates_raw)
+                if isinstance(parsed, list):
+                    rates_list = parsed
+                    rates_is_tabular = True
+            except Exception:
+                pass
+
+    if rates_is_tabular and rates_list:
+        rates_rows_html = "".join([
+            f"""
+            <tr style="border-bottom: 1px solid #e2e8f0; font-size: 13px;">
+              <td style="padding: 10px 12px; font-weight: 600; color: #0f172a;">{r.get('service', 'Service')}</td>
+              <td style="padding: 10px 12px; font-weight: 800; color: #0f766e;">₹{r.get('rate', '0')}</td>
+              <td style="padding: 10px 12px; color: #475569; font-size: 12px;">{r.get('unit', 'Per Case')}</td>
+              <td style="padding: 10px 12px; color: #64748b; font-size: 12px;">{r.get('notes', '')}</td>
+            </tr>
+            """
+            for r in rates_list
+        ])
+        rates_html_block = f"""
+        <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; background: #ffffff; border-radius: 8px; overflow: hidden; border: 1px solid #ccfbf1;">
+          <thead>
+            <tr style="background: #0f766e; color: #ffffff; text-align: left; font-size: 11px; text-transform: uppercase;">
+              <th style="padding: 9px 12px;">Service / Modality</th>
+              <th style="padding: 9px 12px;">Agreed Rate</th>
+              <th style="padding: 9px 12px;">Billing Unit</th>
+              <th style="padding: 9px 12px;">Remarks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rates_rows_html}
+          </tbody>
+        </table>
+        """
+        rates_plain_text = "\n".join([
+            f"  - {r.get('service')}: ₹{r.get('rate')} ({r.get('unit')}) {('(' + r.get('notes') + ')') if r.get('notes') else ''}"
+            for r in rates_list
+        ])
+    else:
+        rates_display_text = str(rates_raw or "Standard rates as discussed with operations team")
+        rates_html_block = f'<div style="font-size: 14px; font-weight: 700; color: #134e4a; white-space: pre-wrap;">{rates_display_text}</div>'
+        rates_plain_text = rates_display_text
+
+    skills_display = ", ".join(app.skills) if isinstance(app.skills, list) else str(app.skills or "Diagnostic Procedures")
+    
+    subject = "Welcome to XRAi Digital Field Network - Application Approved!"
+    from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'info@xraidigital.com')
+    to_email = [app.email]
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body {{ font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333333; margin: 0; padding: 0; background-color: #f4f6f9; }}
+        .container {{ max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }}
+        .header {{ background: linear-gradient(135deg, #172554, #008ba3); color: #ffffff; padding: 30px 25px; text-align: center; }}
+        .header h1 {{ margin: 0 0 8px 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px; }}
+        .header p {{ margin: 0; font-size: 14px; color: #e0f2fe; }}
+        .body-content {{ padding: 30px 25px; }}
+        .badge-success {{ display: inline-block; background-color: #dcfce7; color: #166534; font-weight: bold; font-size: 12px; padding: 4px 12px; border-radius: 50px; text-transform: uppercase; margin-bottom: 15px; }}
+        .rates-card {{ background-color: #f0fdfa; border: 2px dashed #00acc1; border-radius: 10px; padding: 18px; margin: 20px 0; }}
+        .rates-card h3 {{ margin: 0 0 10px 0; color: #0f766e; font-size: 16px; font-weight: bold; }}
+        .details-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+        .details-table td {{ padding: 8px 12px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }}
+        .details-table td.label {{ color: #64748b; font-weight: 600; width: 38%; }}
+        .details-table td.value {{ color: #0f172a; font-weight: 600; }}
+        .steps {{ background: #f8fafc; border-radius: 10px; padding: 18px; margin: 20px 0; }}
+        .steps h4 {{ margin: 0 0 10px 0; color: #1e293b; font-size: 14px; font-weight: bold; }}
+        .steps ol {{ margin: 0; padding-left: 20px; font-size: 13px; color: #475569; }}
+        .steps li {{ margin-bottom: 8px; }}
+        .footer {{ background: #f1f5f9; padding: 20px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; }}
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>XRAi Digital Field Network</h1>
+          <p>Care at Home Diagnostic Services</p>
+        </div>
+        <div class="body-content">
+          <span class="badge-success">&#10003; Application Approved</span>
+          <h2 style="margin: 0 0 12px 0; color: #0f172a; font-size: 20px;">Dear {app.full_name},</h2>
+          <p style="font-size: 14px; color: #334155; margin-bottom: 16px;">
+            We are pleased to inform you that your onboarding application to join <strong>XRAi Digital</strong> as a Field Diagnostic Technician has been <strong>approved</strong>!
+          </p>
+          
+          {f'<div style="background-color: #f8fafc; border-left: 4px solid #0284c7; padding: 12px 16px; margin: 16px 0; font-size: 13px; color: #0369a1;">{custom_message}</div>' if custom_message else ''}
+
+          <div class="rates-card">
+            <h3>Agreed Technician Payout Rates:</h3>
+            {rates_html_block}
+          </div>
+
+          <table class="details-table">
+            <tr>
+              <td class="label">Approved Modalities:</td>
+              <td class="value">{skills_display}</td>
+            </tr>
+            <tr>
+              <td class="label">Operating Location:</td>
+              <td class="value">{app.work_location}</td>
+            </tr>
+            <tr>
+              <td class="label">Contact Mobile:</td>
+              <td class="value">{app.mobile_number}</td>
+            </tr>
+            <tr>
+              <td class="label">Registered Bank:</td>
+              <td class="value">{app.bank_name or 'On file'}</td>
+            </tr>
+          </table>
+
+          <div class="steps">
+            <h4>Next Steps for Field Deployment:</h4>
+            <ol>
+              <li>Our Field Operations Coordinator will connect with you on <strong>{app.mobile_number}</strong> to coordinate kit verification and route assignments.</li>
+              <li>You will receive your <strong>Technician Mobile App credentials</strong> to start receiving home-visit diagnostic bookings.</li>
+              <li>All completed cases will be logged on your app and payouts will be credited per the agreed rates above.</li>
+            </ol>
+          </div>
+
+          <p style="font-size: 13px; color: #475569; margin-top: 24px;">
+            If you have any questions or require support, please contact operations at <a href="mailto:info@xraidigital.com" style="color: #00acc1; font-weight: 600;">info@xraidigital.com</a> or Toll-Free <strong>1800 270 2900</strong>.
+          </p>
+        </div>
+        <div class="footer">
+          <p style="margin: 0 0 4px 0;"><strong>XRAi Digital</strong> &bull; A Unit of U4RAD Technologies Pvt Ltd</p>
+          <p style="margin: 0;">CIN: U86100HR2024PTC120732 | Gurgaon & Kolkata, India</p>
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+
+    plain_message = f"""Dear {app.full_name},
+
+Congratulations! Your onboarding application to join XRAi Digital as a Field Diagnostic Technician has been APPROVED.
+
+AGREED PAYOUT RATES:
+{rates_plain_text}
+
+Approved Modalities: {skills_display}
+Operating Location: {app.work_location}
+Contact Mobile: {app.mobile_number}
+Registered Bank: {app.bank_name or 'On file'}
+
+NEXT STEPS:
+1. Our Field Operations Coordinator will connect with you on {app.mobile_number} to coordinate kit verification and route assignments.
+2. You will receive your Technician Mobile App credentials to start receiving home-visit diagnostic bookings.
+3. All completed cases will be logged on your app and payouts will be credited per the agreed rates above.
+
+Best regards,
+XRAi Digital Field Operations Team
+A Unit of U4RAD Technologies Pvt Ltd
+Email: info@xraidigital.com | Toll-Free: 1800 270 2900
+"""
+
+    msg = EmailMultiAlternatives(subject, plain_message, from_email, to_email)
+    msg.attach_alternative(html_content, "text/html")
+    msg.send(fail_silently=False)
+
+
+@api_view(['GET', 'PATCH', 'POST'])
+def admin_technician_onboardings(request):
+    if request.method == 'GET':
+        status_filter = request.query_params.get('status')
+        search_query = request.query_params.get('search')
+        
+        qs = TechnicianOnboarding.objects.all().order_by('-created_at')
+        if status_filter and status_filter.upper() != 'ALL':
+            qs = qs.filter(status=status_filter.upper())
+        if search_query:
+            qs = qs.filter(
+                Q(full_name__icontains=search_query) |
+                Q(mobile_number__icontains=search_query) |
+                Q(city__icontains=search_query) |
+                Q(work_location__icontains=search_query) |
+                Q(education_qualification__icontains=search_query)
+            )
+            
+        stats = {
+            'total_applications': TechnicianOnboarding.objects.count(),
+            'pending_review': TechnicianOnboarding.objects.filter(status='PENDING').count(),
+            'approved_working': TechnicianOnboarding.objects.filter(status='APPROVED').count(),
+            'rejected': TechnicianOnboarding.objects.filter(status='REJECTED').count(),
+        }
+        
+        serializer = TechnicianOnboardingSerializer(qs, many=True)
+        return Response({
+            'Success': True,
+            'stats': stats,
+            'applications': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    elif request.method in ('PATCH', 'POST'):
+        app_id = request.data.get('id')
+        new_status = request.data.get('status')
+        agreed_rates = request.data.get('agreed_rates')
+        admin_notes = request.data.get('admin_notes')
+        send_email = request.data.get('send_email', False)
+        custom_message = request.data.get('custom_message')
+        
+        if not app_id:
+            return Response({'Success': False, 'Message': 'Application id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            app = TechnicianOnboarding.objects.get(id=app_id)
+            if new_status:
+                app.status = new_status.upper()
+            if agreed_rates is not None:
+                if isinstance(agreed_rates, (list, dict)):
+                    import json
+                    app.agreed_rates = json.dumps(agreed_rates)
+                else:
+                    app.agreed_rates = str(agreed_rates).strip()
+            if admin_notes is not None:
+                app.admin_notes = admin_notes.strip()
+            app.reviewed_at = timezone.now()
+
+            email_sent = False
+            email_error = None
+            if send_email:
+                if not app.email:
+                    email_error = "Technician has no email address on file."
+                else:
+                    try:
+                        send_technician_confirmation_email(app, agreed_rates=app.agreed_rates, custom_message=custom_message)
+                        email_sent = True
+                        app.email_sent = True
+                        app.email_sent_at = timezone.now()
+                    except Exception as em_err:
+                        email_error = str(em_err)
+                        print(f"Error sending technician approval email: {em_err}")
+
+            app.save()
+
+            msg = "Application updated successfully."
+            if new_status:
+                msg = f"Application marked as {new_status}."
+            if email_sent:
+                msg += f" Confirmation email sent to {app.email}."
+            elif email_error:
+                msg += f" (Note: Email could not be delivered: {email_error})"
+
+            return Response({
+                'Success': True,
+                'Message': msg,
+                'email_sent': email_sent,
+                'email_error': email_error,
+                'application': TechnicianOnboardingSerializer(app).data
+            }, status=status.HTTP_200_OK)
+        except TechnicianOnboarding.DoesNotExist:
+            return Response({'Success': False, 'Message': 'Application not found'}, status=status.HTTP_404_NOT_FOUND)
