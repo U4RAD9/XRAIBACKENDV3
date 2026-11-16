@@ -402,7 +402,23 @@ def update_password(request):
 @api_view(['GET', 'POST'])
 @permission_classes([AllowAny]) # Adjust if needing auth
 def tracking_api(request):
+    from bookings.models import SlotBookingMaster
+
     if request.method == 'POST':
+        # Check if booking is already Completed. If completed, lock and reject updates permanently.
+        slot_booking_id = request.data.get('slot_booking')
+        if slot_booking_id:
+            try:
+                booking = SlotBookingMaster.objects.filter(slot_booking_id=slot_booking_id).first()
+                if booking and str(booking.status or '').strip().lower() == 'completed':
+                    return Response({
+                        "Success": False,
+                        "Message": "Tracking is stopped for this case because it is already marked as Completed.",
+                        "is_completed": True
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            except Exception:
+                pass
+
         # Technician pushes location
         serializer = UserLocationHistorySerializer(data=request.data)
         if serializer.is_valid():
@@ -418,9 +434,18 @@ def tracking_api(request):
         if not booking_id:
             return Response({"Success": False, "Message": "booking_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
+        booking = SlotBookingMaster.objects.filter(slot_booking_id=booking_id).first()
+        is_completed = (booking is not None and str(booking.status or '').strip().lower() == 'completed')
+        booking_status = booking.status if (booking and booking.status) else 'Pending'
+
         locations = UserLocationHistory.objects.filter(slot_booking_id=booking_id).order_by('timestamp')
         serializer = UserLocationHistorySerializer(locations, many=True)
-        return Response({"Success": True, "Markers": serializer.data}, status=status.HTTP_200_OK)
+        return Response({
+            "Success": True, 
+            "Markers": serializer.data,
+            "is_completed": is_completed,
+            "status": booking_status
+        }, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 @throttle_classes([OTPRateThrottle])
