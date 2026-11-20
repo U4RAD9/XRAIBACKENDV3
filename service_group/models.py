@@ -6,3 +6,6 @@ class ServiceGroup(models.Model):
     is_active = models.BooleanField(default=True, null=True, blank=True)
     added_date = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     updated_date = models.DateTimeField(auto_now=True, null=True, blank=True)
+
+    def __str__(self):
+        return self.service_group_name

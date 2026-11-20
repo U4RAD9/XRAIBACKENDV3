@@ -1,9 +1,8 @@
 from django.contrib import admin
 from .models import Location
 
-def get_list_display(model):
-    return [field.name for field in model._meta.fields]
-
 @admin.register(Location)
 class LocationAdmin(admin.ModelAdmin):
-    list_display = get_list_display(Location)
+    list_display = ('location_id', 'location_name', 'is_active', 'added_date')
+    search_fields = ('location_name', 'location_id')
+    list_filter = ('is_active',)

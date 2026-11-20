@@ -1,9 +1,8 @@
 from django.contrib import admin
 from .models import Patient
 
-def get_list_display(model):
-    return [field.name for field in model._meta.fields]
-
 @admin.register(Patient)
 class PatientAdmin(admin.ModelAdmin):
-    list_display = get_list_display(Patient)
+    list_display = ('patient_id', 'patient_name', 'alternate_mobile_number', 'email', 'age', 'gender', 'added_date')
+    search_fields = ('patient_id', 'patient_name', 'alternate_mobile_number', 'email')
+    list_filter = ('gender', 'added_date')

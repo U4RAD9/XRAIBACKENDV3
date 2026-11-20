@@ -1,9 +1,8 @@
 from django.contrib import admin
 from .models import Service
 
-def get_list_display(model):
-    return [field.name for field in model._meta.fields]
-
 @admin.register(Service)
 class ServiceAdmin(admin.ModelAdmin):
-    list_display = get_list_display(Service)
+    list_display = ('service_id', 'service_name', 'service_group', 'is_active', 'added_date')
+    search_fields = ('service_id', 'service_name', 'service_group__service_group_name')
+    list_filter = ('service_group', 'is_active')

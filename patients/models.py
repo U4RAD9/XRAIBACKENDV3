@@ -23,3 +23,8 @@ class Patient(models.Model):
     bp = models.CharField(max_length=50, null=True, blank=True)
     comment = models.TextField(null=True, blank=True)
     added_date = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+
+    def __str__(self):
+        name = self.patient_name or f"{self.first_name or ''} {self.last_name or ''}".strip() or "Patient"
+        phone = f" ({self.alternate_mobile_number})" if self.alternate_mobile_number else ""
+        return f"{name} [ID: {self.patient_id}]{phone}"

@@ -59,6 +59,11 @@ class SlotBookingMaster(models.Model):
     signature_id = models.CharField(max_length=100, null=True, blank=True)
     is_read = models.BooleanField(null=True, blank=True)
 
+    def __str__(self):
+        name = self.patient_name or (self.patient.patient_name if self.patient and hasattr(self.patient, 'patient_name') and self.patient.patient_name else 'Unknown Patient')
+        phone = f" ({self.phone_number})" if self.phone_number else ""
+        return f"Booking #{self.slot_booking_id} - {name}{phone}"
+
 class SlotBookingDetails(models.Model):
     slot_booking_det_id = models.AutoField(primary_key=True)
     slot_booking = models.ForeignKey(SlotBookingMaster, on_delete=models.CASCADE, db_column='slot_booking_id', null=True, blank=True)
@@ -73,6 +78,13 @@ class SlotBookingDetails(models.Model):
     report_filename = models.CharField(max_length=255, null=True, blank=True)
     report_extension = models.CharField(max_length=10, null=True, blank=True)
 
+    def __str__(self):
+        svc = self.service.service_name if self.service else 'Service'
+        if self.slot_booking:
+            p_name = self.slot_booking.patient_name or (self.slot_booking.patient.patient_name if self.slot_booking.patient and hasattr(self.slot_booking.patient, 'patient_name') and self.slot_booking.patient.patient_name else 'Patient')
+            return f"Booking #{self.slot_booking.slot_booking_id} | {p_name} - {svc} (Det #{self.slot_booking_det_id})"
+        return f"{svc} (Det #{self.slot_booking_det_id})"
+
 class SlotBookingFile(models.Model):
     id = models.AutoField(primary_key=True)
     slot_booking_detail = models.ForeignKey(SlotBookingDetails, on_delete=models.CASCADE, related_name='files')
@@ -80,3 +92,6 @@ class SlotBookingFile(models.Model):
     file_name = models.CharField(max_length=255)
     file_extension = models.CharField(max_length=10)
     uploaded_on = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.file_type}: {self.file_name} (ID: {self.id})"
