@@ -60,9 +60,21 @@ class SlotBookingMaster(models.Model):
     is_read = models.BooleanField(null=True, blank=True)
 
     def __str__(self):
-        name = self.patient_name or (self.patient.patient_name if self.patient and hasattr(self.patient, 'patient_name') and self.patient.patient_name else 'Unknown Patient')
-        phone = f" ({self.phone_number})" if self.phone_number else ""
-        return f"Booking #{self.slot_booking_id} - {name}{phone}"
+        name = self.patient_name
+        if not name and self.patient and hasattr(self.patient, 'patient_name') and self.patient.patient_name:
+            name = self.patient.patient_name
+        if not name and self.user:
+            name = self.user.full_name or self.user.user_name
+        name = name or 'Patient'
+
+        phone = (
+            self.phone_number or
+            self.alternate_mobile_number or
+            (self.patient.alternate_mobile_number if self.patient else None) or
+            (self.user.mobile_number if self.user else None)
+        )
+        phone_str = f" ({phone})" if phone else ""
+        return f"Booking #{self.slot_booking_id} - {name}{phone_str}"
 
 class SlotBookingDetails(models.Model):
     slot_booking_det_id = models.AutoField(primary_key=True)

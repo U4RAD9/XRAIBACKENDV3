@@ -13,16 +13,55 @@ def get_list_display(model):
 class SlotBookingMasterAdmin(admin.ModelAdmin):
     list_display = (
         'slot_booking_id',
-        'patient_name',
-        'phone_number',
+        'get_patient_name',
+        'get_phone_number',
+        'get_services_booked',
+        'location',
         'slot_booking_datetime',
-        'service_group',
         'payment_status',
         'status',
         'created_date',
     )
-    search_fields = ('slot_booking_id', 'phone_number', 'patient_name', 'email')
-    list_filter = ('status', 'payment_status', 'service_group', 'created_date')
+    search_fields = (
+        'slot_booking_id',
+        'patient_name',
+        'phone_number',
+        'alternate_mobile_number',
+        'patient__patient_name',
+        'patient__alternate_mobile_number',
+        'user__user_name',
+        'user__full_name',
+        'user__mobile_number',
+    )
+    list_filter = ('status', 'payment_status', 'created_date', 'location')
+
+    @admin.display(description='Patient Name', ordering='patient_name')
+    def get_patient_name(self, obj):
+        name = obj.patient_name
+        if not name and obj.patient and obj.patient.patient_name:
+            name = obj.patient.patient_name
+        if not name and obj.user:
+            name = obj.user.full_name or obj.user.user_name
+        return name or '-'
+
+    @admin.display(description='Phone Number', ordering='phone_number')
+    def get_phone_number(self, obj):
+        phone = (
+            obj.phone_number or
+            obj.alternate_mobile_number or
+            (obj.patient.alternate_mobile_number if obj.patient else None) or
+            (obj.user.mobile_number if obj.user else None)
+        )
+        return phone or '-'
+
+    @admin.display(description='Services Booked')
+    def get_services_booked(self, obj):
+        services = list(obj.slotbookingdetails_set.values_list('service__service_name', flat=True))
+        if services:
+            return ", ".join([s for s in services if s])
+        if obj.service_group:
+            return obj.service_group.service_group_name
+        return '-'
 
 @admin.register(SlotBookingDetails)
 class SlotBookingDetailsAdmin(admin.ModelAdmin):
@@ -40,6 +79,7 @@ class SlotBookingDetailsAdmin(admin.ModelAdmin):
         'slot_booking__slot_booking_id',
         'slot_booking__patient_name',
         'slot_booking__phone_number',
+        'slot_booking__patient__patient_name',
         'service__service_name',
         'report_filename',
         'service_filename',
@@ -49,8 +89,14 @@ class SlotBookingDetailsAdmin(admin.ModelAdmin):
     @admin.display(description='Booking Details', ordering='slot_booking__slot_booking_id')
     def get_booking_info(self, obj):
         if obj.slot_booking:
-            p_name = obj.slot_booking.patient_name or '-'
-            return f"Booking #{obj.slot_booking.slot_booking_id} ({p_name})"
+            sb = obj.slot_booking
+            name = sb.patient_name
+            if not name and sb.patient and sb.patient.patient_name:
+                name = sb.patient.patient_name
+            if not name and sb.user:
+                name = sb.user.full_name or sb.user.user_name
+            name = name or 'Patient'
+            return f"Booking #{sb.slot_booking_id} ({name})"
         return "-"
 
 @admin.register(SlotBookingFile)
@@ -85,7 +131,12 @@ class SlotBookingFileAdmin(admin.ModelAdmin):
     def get_patient_name(self, obj):
         if obj.slot_booking_detail and obj.slot_booking_detail.slot_booking:
             sb = obj.slot_booking_detail.slot_booking
-            return sb.patient_name or (sb.patient.patient_name if sb.patient else '-')
+            name = sb.patient_name
+            if not name and sb.patient and sb.patient.patient_name:
+                name = sb.patient.patient_name
+            if not name and sb.user:
+                name = sb.user.full_name or sb.user.user_name
+            return name or '-'
         return "-"
 
     @admin.display(description='Service / Test', ordering='slot_booking_detail__service__service_name')
