@@ -28,7 +28,7 @@ router = DefaultRouter()
 # Accounts routes
 router.register(r'user-types', UserTypeViewSet)
 router.register(r'users', UserViewSet)
-router.register(r'otp-master', OtpMasterViewSet)
+# Note: otp-master is strictly internal and excluded from REST API routes for security.
 
 # Operations routes
 router.register(r'locations', LocationViewSet)

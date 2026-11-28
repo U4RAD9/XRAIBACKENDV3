@@ -5,7 +5,16 @@ class UserSerializer(serializers.ModelSerializer):
     user_type_name = serializers.CharField(source='user_type.user_type_name', read_only=True)
     class Meta:
         model = User
-        fields = '__all__'
+        fields = [
+            'id', 'user_type', 'user_type_name', 'user_name', 'mobile_number',
+            'is_active', 'added_date', 'updated_date', 'full_name',
+            'email', 'gender', 'age', 'first_name', 'last_name',
+            'password', 'mpin'
+        ]
+        extra_kwargs = {
+            'password': {'write_only': True, 'required': False},
+            'mpin': {'write_only': True, 'required': False}
+        }
 
 class UserLocationHistorySerializer(serializers.ModelSerializer):
     class Meta:

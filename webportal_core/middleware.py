@@ -1,4 +1,4 @@
-from django.http import HttpResponseForbidden
+from django.http import HttpResponseForbidden, JsonResponse
 from django.core import signing
 
 class BlockBrowserAPIAccessMiddleware:
@@ -11,6 +11,10 @@ class BlockBrowserAPIAccessMiddleware:
             if request.method == 'OPTIONS':
                 return self.get_response(request)
 
+            # Block internal/sensitive endpoints completely from external API
+            if request.path.startswith('/api/otp-master'):
+                return HttpResponseForbidden("Direct OTP table access is forbidden.")
+
             # 1. API URL Visible - Bypass public authentication endpoints
             if request.path.startswith('/api/auth/') or request.path.startswith('/api/technician-onboarding/submit'):
                 return self.get_response(request)
@@ -20,18 +24,28 @@ class BlockBrowserAPIAccessMiddleware:
             if not auth_header.startswith('Bearer '):
                 return HttpResponseForbidden("Authentication credentials were not provided.")
             
-            token = auth_header.split(' ')[1]
+            token = auth_header.split(' ')[1].strip()
             try:
-                # 3. Identify user - Unsign the token
-                user_info = signing.loads(token)
+                # 3. Identify user - Unsign the token with max_age (7 days)
+                user_info = signing.loads(token, max_age=86400 * 7)
                 request.user_info = user_info
-            except signing.BadSignature:
+            except (signing.BadSignature, signing.SignatureExpired):
                 return HttpResponseForbidden("Invalid or expired authentication token.")
             
+            # Verify UserID exists in payload
+            if not user_info.get('UserID'):
+                return HttpResponseForbidden("Malformed authentication token.")
+            
             # 4. Authorization - Check what THIS user is allowed to do
-            user_type = request.user_info.get('UserType', '').strip().lower()
+            user_type = str(request.user_info.get('UserType', '')).strip().lower()
             
             if user_type == 'patient':
+                # Block admin-only endpoints under /api/booking
+                if (request.path.startswith('/api/booking/all_bookings') or 
+                    request.path.startswith('/api/booking/dashboard_stats') or 
+                    request.path.startswith('/api/booking/technician_bookings')):
+                    return HttpResponseForbidden("Access restricted to administrative staff.")
+
                 # Allowed paths for Patient
                 allowed_paths = [
                     '/api/booking',
@@ -115,6 +129,11 @@ class BlockBrowserAPIAccessMiddleware:
 
             
             elif user_type == 'technician':
+                # Block admin-only endpoints under /api/booking
+                if (request.path.startswith('/api/booking/all_bookings') or 
+                    request.path.startswith('/api/booking/dashboard_stats')):
+                    return HttpResponseForbidden("Access restricted to administrative staff.")
+
                 # Allowed paths for Technician
                 allowed_paths = [
                     '/api/booking',

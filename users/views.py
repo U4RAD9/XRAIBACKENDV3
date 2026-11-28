@@ -10,6 +10,10 @@ from django.conf import settings
 class OTPRateThrottle(AnonRateThrottle):
     scope = 'otp_requests'
 
+class AuthRateThrottle(AnonRateThrottle):
+    scope = 'auth_attempts'
+
+import datetime
 import random
 import traceback
 import requests
@@ -41,12 +45,23 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         user_info = getattr(self.request, 'user_info', {})
-        u_type = (user_info.get('UserType') or '').lower()
-        if u_type in ['consultant admin', 'consultant_admin', 'consultantadmin']:
+        u_type = (user_info.get('UserType') or '').strip().lower()
+        logged_in_user_id = user_info.get('UserID')
+
+        if u_type in ['admin', 'superadmin', 'technician admin', 'technician_admin']:
+            pass # Admins have full user directory access
+        elif u_type in ['consultant admin', 'consultant_admin', 'consultantadmin']:
             # Consultant Admin strictly sees Consultant and Consultant Admin user accounts
             qs = qs.filter(user_type__user_type_name__in=['Consultant', 'Consultant Admin'])
+        else:
+            # Patients, technicians, partners, or non-admin staff can only view their own user account
+            if logged_in_user_id:
+                qs = qs.filter(id=logged_in_user_id)
+            else:
+                qs = qs.none()
+
         user_type_param = self.request.query_params.get('user_type')
-        if user_type_param:
+        if user_type_param and u_type in ['admin', 'superadmin']:
             qs = qs.filter(user_type__user_type_name__iexact=user_type_param)
         return qs
 
@@ -134,6 +149,7 @@ def send_otp(request):
         return Response({"StatusCode": False, "Message": str(e)}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@throttle_classes([OTPRateThrottle])
 @permission_classes([AllowAny])
 def verify_otp(request):
     mobile = request.data.get('mobile')
@@ -141,8 +157,13 @@ def verify_otp(request):
     if not mobile or not otp:
         return Response(False, status=status.HTTP_200_OK)
     
-    latest_otp = OtpMaster.objects.filter(mobile=mobile).order_by('-otp_id').first()
-    if latest_otp and latest_otp.otp == otp:
+    fifteen_minutes_ago = timezone.now() - datetime.timedelta(minutes=15)
+    latest_otp = OtpMaster.objects.filter(
+        mobile=mobile,
+        otp_datetime__gte=fifteen_minutes_ago
+    ).order_by('-otp_id').first()
+
+    if latest_otp and str(latest_otp.otp).strip() == str(otp).strip():
         return Response(True, status=status.HTTP_200_OK)
     
     return Response(False, status=status.HTTP_200_OK)
@@ -266,6 +287,7 @@ def signup(request):
         return Response({"Success": False, "Message": str(e)}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@throttle_classes([AuthRateThrottle])
 @permission_classes([AllowAny])
 def authenticate_user(request):
     mobile_or_username = request.data.get('MobileNumber') or request.data.get('username')
@@ -280,6 +302,9 @@ def authenticate_user(request):
         
         if not user:
             return Response({"Success": False, "message": "Mobile number or username is not registered."}, status=status.HTTP_200_OK)
+
+        if not user.is_active:
+            return Response({"Success": False, "message": "This account is inactive. Please contact administrator."}, status=status.HTTP_403_FORBIDDEN)
 
         if user.mpin == mpin or user.password == mpin:
             from django.core import signing
@@ -340,23 +365,13 @@ def forget_mpin(request):
     except Exception as e:
         return Response({"StatusCode": False, "Message": str(e)}, status=status.HTTP_200_OK)
 
-@api_view(['GET'])
+@api_view(['GET', 'POST'])
 @permission_classes([AllowAny])
 def get_visitor_mpin(request):
-    mobile = request.query_params.get('mobile')
-    if not mobile:
-        return Response({"StatusCode": False, "MPin": ""}, status=status.HTTP_200_OK)
-    
-    try:
-        user = User.objects.filter(mobile_number=mobile).first()
-        if user:
-            return Response({"StatusCode": True, "MPin": user.mpin}, status=status.HTTP_200_OK)
-        else:
-            return Response({"StatusCode": False, "MPin": ""}, status=status.HTTP_200_OK)
-    except Exception as e:
-        return Response({"StatusCode": False, "MPin": ""}, status=status.HTTP_200_OK)
+    return Response({"StatusCode": False, "Message": "This endpoint is permanently disabled for security."}, status=status.HTTP_403_FORBIDDEN)
 
 @api_view(['POST'])
+@throttle_classes([AuthRateThrottle])
 @permission_classes([AllowAny])
 def employee_login(request):
     username = request.data.get('Username')
@@ -367,9 +382,20 @@ def employee_login(request):
 
     try:
         user = User.objects.get(user_name=username, password=password)
+        if not user.is_active:
+            return Response({"Success": False, "message": "This account is inactive. Please contact administrator."}, status=status.HTTP_403_FORBIDDEN)
+
+        from django.core import signing
+        token_payload = {
+            "UserID": user.id,
+            "UserType": user.user_type.user_type_name
+        }
+        auth_token = signing.dumps(token_payload)
+
         return Response({
             "Success": True, 
             "message": "Logged in successfully.",
+            "Token": auth_token,
             "UserType": user.user_type.user_type_name,
             "UserID": user.id,
             "UserName": user.user_name
@@ -377,28 +403,47 @@ def employee_login(request):
     except User.DoesNotExist:
         return Response({"Success": False, "message": "Invalid username or password."}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({"Success": False, "message": str(e)}, status=status.HTTP_200_OK)
+        return Response({"Success": False, "message": "Authentication error."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@throttle_classes([OTPRateThrottle])
 @permission_classes([AllowAny])
 def update_password(request):
     mobile = request.data.get('mobile')
     new_password = request.data.get('new_password')
+    otp = request.data.get('otp')
     
     if not mobile or not new_password:
-        return Response({"Success": False, "Message": "Mobile and New Password are required."}, status=status.HTTP_200_OK)
-        
+        return Response({"Success": False, "Message": "Mobile and New Password are required."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if not otp:
+        return Response({"Success": False, "Message": "Valid OTP is required to reset password."}, status=status.HTTP_400_BAD_REQUEST)
+
+    fifteen_minutes_ago = timezone.now() - datetime.timedelta(minutes=15)
+    valid_otp = OtpMaster.objects.filter(
+        mobile=mobile,
+        otp=str(otp).strip(),
+        otp_datetime__gte=fifteen_minutes_ago
+    ).order_by('-otp_id').first()
+
+    if not valid_otp:
+        return Response({"Success": False, "Message": "Invalid or expired OTP. Please verify again."}, status=status.HTTP_400_BAD_REQUEST)
+
     try:
         user = User.objects.filter(mobile_number=mobile).first()
         if not user:
-            return Response({"Success": False, "Message": "User not found."}, status=status.HTTP_200_OK)
+            return Response({"Success": False, "Message": "User not found."}, status=status.HTTP_404_NOT_FOUND)
         
         user.password = new_password
         user.mpin = new_password
         user.save()
+
+        # Delete all OTPs for this mobile to prevent re-use
+        OtpMaster.objects.filter(mobile=mobile).delete()
+
         return Response({"Success": True, "Message": "Password updated successfully."}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({"Success": False, "Message": str(e)}, status=status.HTTP_200_OK)
+        return Response({"Success": False, "Message": "Error updating password."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET', 'POST'])
 @permission_classes([AllowAny]) # Adjust if needing auth
@@ -485,11 +530,14 @@ def send_login_otp(request):
         }
         threading.Thread(target=send_sms_background, args=(url, headers, payload)).start()
         
-        return Response({"StatusCode": True, "Message": "OTP has been sent to your registered mobile number.", "ActualMobile": actual_mobile}, status=status.HTTP_200_OK)
+        # Secure response: Do not leak unmasked actual_mobile in response
+        masked_hint = f" ending in {actual_mobile[-4:]}" if len(actual_mobile) >= 4 else ""
+        return Response({"StatusCode": True, "Message": f"OTP has been sent to your registered mobile number{masked_hint}."}, status=status.HTTP_200_OK)
     except Exception as e:
-        return Response({"StatusCode": False, "Message": str(e)}, status=status.HTTP_200_OK)
+        return Response({"StatusCode": False, "Message": "Unable to send OTP."}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
+@throttle_classes([AuthRateThrottle])
 @permission_classes([AllowAny])
 def login_with_otp(request):
     mobile = request.data.get('mobile')
@@ -498,10 +546,21 @@ def login_with_otp(request):
     if not mobile or not otp:
         return Response({"Success": False, "message": "Mobile number and OTP are required."}, status=status.HTTP_200_OK)
 
-    latest_otp = OtpMaster.objects.filter(mobile=mobile).order_by('-otp_id').first()
-    if latest_otp and latest_otp.otp == otp:
+    fifteen_minutes_ago = timezone.now() - datetime.timedelta(minutes=15)
+    latest_otp = OtpMaster.objects.filter(
+        mobile=mobile,
+        otp_datetime__gte=fifteen_minutes_ago
+    ).order_by('-otp_id').first()
+
+    if latest_otp and str(latest_otp.otp).strip() == str(otp).strip():
+        # Invalidate OTP immediately to prevent replay attacks
+        latest_otp.delete()
+
         user = User.objects.filter(mobile_number=mobile).first()
         if user:
+            if not user.is_active:
+                return Response({"Success": False, "message": "This account is inactive. Please contact administrator."}, status=status.HTTP_403_FORBIDDEN)
+
             from django.core import signing
             token_payload = {
                 "UserID": user.id,
@@ -523,8 +582,8 @@ def login_with_otp(request):
             }, status=status.HTTP_200_OK)
         else:
             return Response({"Success": False, "message": "User not found."}, status=status.HTTP_200_OK)
-    else:
-        return Response({"Success": False, "message": "Invalid OTP."}, status=status.HTTP_200_OK)
+
+    return Response({"Success": False, "message": "Invalid or expired OTP."}, status=status.HTTP_200_OK)
 
 
 class DPDPConsentLogViewSet(viewsets.ModelViewSet):
@@ -1087,6 +1146,7 @@ def consultant_submissions_export_csv(request):
 
 
 @api_view(['POST'])
+@throttle_classes([OTPRateThrottle])
 @permission_classes([AllowAny])
 def submit_technician_onboarding(request):
     try:

@@ -1,4 +1,5 @@
 from rest_framework import viewsets, filters
+from rest_framework.exceptions import PermissionDenied
 from webportal_core.pagination import StandardResultsSetPagination
 from .models import Patient
 from .serializers import PatientSerializer
@@ -14,25 +15,39 @@ class PatientViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Patient.objects.all().order_by('-patient_id')
         user_info = getattr(self.request, 'user_info', {})
-        user_type = user_info.get('UserType', '').lower()
+        user_type = str(user_info.get('UserType', '')).strip().lower()
         logged_in_user_id = user_info.get('UserID')
 
-        if user_type == 'partner':
-            queryset = queryset.filter(user_id=logged_in_user_id)
+        # Patients and Partners are strictly locked to their own patient records
+        if user_type in ['patient', 'partner']:
+            if logged_in_user_id:
+                return queryset.filter(user_id=logged_in_user_id)
+            return queryset.none()
         
-        # Keep query param filter for admin/other usage
-        user_id = self.request.query_params.get('user_id')
-        if user_id:
-            queryset = queryset.filter(user_id=user_id)
-            
-        return queryset
+        # Technician can only see patients if linked to their assigned bookings
+        if user_type == 'technician':
+            if logged_in_user_id:
+                return queryset.filter(slotbookingmaster__service_provider_id=logged_in_user_id).distinct()
+            return queryset.none()
+
+        # Admins / SuperAdmins / Doctors can view all, or filter by query param
+        if user_type in ['admin', 'superadmin', 'doctor', 'consultant admin', 'consultant_admin', 'technician admin', 'technician_admin']:
+            user_id = self.request.query_params.get('user_id')
+            if user_id:
+                queryset = queryset.filter(user_id=user_id)
+            return queryset
+
+        # Fallback for any other non-admin role: strictly own records
+        if logged_in_user_id:
+            return queryset.filter(user_id=logged_in_user_id)
+        return queryset.none()
 
     def perform_create(self, serializer):
         user_info = getattr(self.request, 'user_info', {})
-        user_type = user_info.get('UserType', '').lower()
+        user_type = str(user_info.get('UserType', '')).strip().lower()
         logged_in_user_id = user_info.get('UserID')
 
-        if user_type == 'partner' and logged_in_user_id:
+        if user_type in ['partner', 'patient'] and logged_in_user_id:
             serializer.save(user_id=logged_in_user_id)
             return
 
@@ -46,6 +61,16 @@ class PatientViewSet(viewsets.ModelViewSet):
             serializer.save()
 
     def perform_update(self, serializer):
+        user_info = getattr(self.request, 'user_info', {})
+        user_type = str(user_info.get('UserType', '')).strip().lower()
+        logged_in_user_id = user_info.get('UserID')
+
+        # Enforce that patients/partners can only update their own records
+        if user_type in ['patient', 'partner'] and logged_in_user_id:
+            instance = self.get_object()
+            if instance.user_id != logged_in_user_id:
+                raise PermissionDenied("You do not have permission to modify this patient.")
+
         patient = serializer.save()
         # Update associated bookings with new patient data
         SlotBookingMaster.objects.filter(patient=patient).update(
@@ -59,14 +84,20 @@ class PatientViewSet(viewsets.ModelViewSet):
         )
 
     def perform_destroy(self, instance):
-        # When a patient is deleted, ensure all related data is wiped out completely
+        user_info = getattr(self.request, 'user_info', {})
+        user_type = str(user_info.get('UserType', '')).strip().lower()
+
+        # Only administrators can delete patient records
+        if user_type not in ['admin', 'superadmin']:
+            raise PermissionDenied("Only administrators are permitted to delete patient records.")
+
         from users.models import UserLocationHistory
         bookings = SlotBookingMaster.objects.filter(patient=instance)
         
         # Delete all technician tracking location points associated with these bookings
         UserLocationHistory.objects.filter(slot_booking__in=bookings).delete()
         
-        # Delete all bookings (this will automatically cascade and delete SlotBookingDetails and SlotBookingFiles)
+        # Delete all bookings (cascade will delete SlotBookingDetails and SlotBookingFiles)
         bookings.delete()
         
         # Finally delete the patient

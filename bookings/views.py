@@ -11,16 +11,92 @@ import razorpay # type: ignore
 from django.conf import settings
 from django.utils.timezone import localtime
 
+import uuid
 from .models import SlotBookingMaster, SlotBookingDetails, SlotBookingFile
 from .serializers import SlotBookingMasterSerializer, SlotBookingDetailsSerializer
 
+ALLOWED_UPLOAD_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.webp', '.dcm'}
+MAX_UPLOAD_SIZE = 25 * 1024 * 1024 # 25 MB
+
+def secure_save_file(file_obj, subfolder=''):
+    if not file_obj:
+        return None, "File is required."
+    
+    if file_obj.size > MAX_UPLOAD_SIZE:
+        return None, "File size exceeds 25MB limit."
+
+    ext = os.path.splitext(file_obj.name or '')[1].lower()
+    if not ext and hasattr(file_obj, 'content_type'):
+        content_type = str(getattr(file_obj, 'content_type', '')).lower()
+        if 'jpeg' in content_type or 'jpg' in content_type:
+            ext = '.jpg'
+        elif 'png' in content_type:
+            ext = '.png'
+        elif 'pdf' in content_type:
+            ext = '.pdf'
+        elif 'webp' in content_type:
+            ext = '.webp'
+
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        return None, f"File type '{ext}' is not permitted. Allowed: PDF, JPG, PNG, WEBP, DCM."
+
+    safe_filename = f"{uuid.uuid4().hex}{ext}"
+    if subfolder:
+        safe_filename = os.path.join(subfolder, safe_filename).replace('\\', '/')
+
+    fs = FileSystemStorage()
+    saved_name = fs.save(safe_filename, file_obj)
+    return saved_name, None
+
 class SlotBookingMasterViewSet(viewsets.ModelViewSet):
-    queryset = SlotBookingMaster.objects.all()
+    queryset = SlotBookingMaster.objects.all().order_by('-slot_booking_id')
     serializer_class = SlotBookingMasterSerializer
 
+    def get_queryset(self):
+        queryset = SlotBookingMaster.objects.all().order_by('-slot_booking_id')
+        user_info = getattr(self.request, 'user_info', {})
+        user_type = str(user_info.get('UserType', '')).strip().lower()
+        logged_in_user_id = user_info.get('UserID')
+
+        if user_type in ['patient', 'partner']:
+            if logged_in_user_id:
+                return queryset.filter(user_id=logged_in_user_id)
+            return queryset.none()
+        elif user_type == 'technician':
+            if logged_in_user_id:
+                return queryset.filter(service_provider_id=logged_in_user_id)
+            return queryset.none()
+        elif user_type in ['admin', 'superadmin', 'doctor', 'technician admin', 'technician_admin']:
+            return queryset
+        else:
+            if logged_in_user_id:
+                return queryset.filter(user_id=logged_in_user_id)
+            return queryset.none()
+
 class SlotBookingDetailsViewSet(viewsets.ModelViewSet):
-    queryset = SlotBookingDetails.objects.all()
+    queryset = SlotBookingDetails.objects.all().order_by('-slot_booking_det_id')
     serializer_class = SlotBookingDetailsSerializer
+
+    def get_queryset(self):
+        queryset = SlotBookingDetails.objects.all().order_by('-slot_booking_det_id')
+        user_info = getattr(self.request, 'user_info', {})
+        user_type = str(user_info.get('UserType', '')).strip().lower()
+        logged_in_user_id = user_info.get('UserID')
+
+        if user_type in ['patient', 'partner']:
+            if logged_in_user_id:
+                return queryset.filter(slot_booking__user_id=logged_in_user_id)
+            return queryset.none()
+        elif user_type == 'technician':
+            if logged_in_user_id:
+                return queryset.filter(slot_booking__service_provider_id=logged_in_user_id)
+            return queryset.none()
+        elif user_type in ['admin', 'superadmin', 'doctor', 'technician admin', 'technician_admin']:
+            return queryset
+        else:
+            if logged_in_user_id:
+                return queryset.filter(slot_booking__user_id=logged_in_user_id)
+            return queryset.none()
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -184,6 +260,14 @@ def get_last_booking(request):
     last_booking = SlotBookingMaster.objects.filter(patient_id=patient_id).order_by('-created_date').first()
     if not last_booking:
         return Response({"Success": False, "Message": "No booking found"}, status=status.HTTP_404_NOT_FOUND)
+
+    user_info = getattr(request, 'user_info', {})
+    token_user_type = str(user_info.get('UserType', '')).strip().lower()
+    token_user_id = user_info.get('UserID')
+
+    if token_user_type in ['patient', 'partner'] and token_user_id:
+        if last_booking.user_id != token_user_id and (not last_booking.patient or last_booking.patient.user_id != token_user_id):
+            return Response({"Success": False, "Message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
         
     services = []
     details = SlotBookingDetails.objects.filter(slot_booking=last_booking)
@@ -279,13 +363,28 @@ def get_all_bookings(request):
         .order_by('-created_date')
     )
 
-    # Partner filtering logic
+    # Role-based scoping: non-admins can only see their own records
     user_info = getattr(request, 'user_info', {})
-    user_type = user_info.get('UserType', '').lower()
+    user_type = str(user_info.get('UserType', '')).strip().lower()
     logged_in_user_id = user_info.get('UserID')
 
-    if user_type == 'partner' and logged_in_user_id:
-        query = query.filter(user_id=logged_in_user_id)
+    if user_type in ['partner', 'patient']:
+        if logged_in_user_id:
+            query = query.filter(user_id=logged_in_user_id)
+        else:
+            query = query.none()
+    elif user_type == 'technician':
+        if logged_in_user_id:
+            query = query.filter(service_provider_id=logged_in_user_id)
+        else:
+            query = query.none()
+    elif user_type in ['admin', 'superadmin', 'doctor', 'technician admin', 'technician_admin']:
+        pass
+    else:
+        if logged_in_user_id:
+            query = query.filter(user_id=logged_in_user_id)
+        else:
+            query = query.none()
 
     if date:
         query = query.filter(slot_booking_datetime__date=date)
@@ -401,6 +500,17 @@ def get_all_bookings(request):
 def get_booking_details(request, id):
     try:
         b = SlotBookingMaster.objects.get(slot_booking_id=id)
+
+        user_info = getattr(request, 'user_info', {})
+        token_user_type = str(user_info.get('UserType', '')).strip().lower()
+        token_user_id = user_info.get('UserID')
+
+        if token_user_type in ['patient', 'partner'] and token_user_id:
+            if b.user_id != token_user_id and (not b.patient or b.patient.user_id != token_user_id):
+                return Response({"Success": False, "Message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+        elif token_user_type == 'technician' and token_user_id:
+            if b.service_provider_id != token_user_id:
+                return Response({"Success": False, "Message": "Access denied to unassigned booking."}, status=status.HTTP_403_FORBIDDEN)
         
         services = []
         details = SlotBookingDetails.objects.filter(slot_booking=b)
@@ -476,8 +586,10 @@ def upload_booking_file(request, id):
         if not file_obj or not file_type:
             return Response({"Success": False, "Message": "File or type missing"}, status=status.HTTP_400_BAD_REQUEST)
             
-        fs = FileSystemStorage()
-        filename = fs.save(file_obj.name, file_obj)
+        filename, err = secure_save_file(file_obj)
+        if err:
+            return Response({"Success": False, "Message": err}, status=status.HTTP_400_BAD_REQUEST)
+
         extension = os.path.splitext(filename)[1]
         
         SlotBookingFile.objects.create(
@@ -491,7 +603,7 @@ def upload_booking_file(request, id):
     except SlotBookingDetails.DoesNotExist:
         return Response({"Success": False, "Message": "Service detail not found"}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
-        return Response({"Success": False, "Message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"Success": False, "Message": "Upload failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -558,15 +670,14 @@ def get_dashboard_stats(request):
 @permission_classes([AllowAny])
 def upload_prescription_file(request, id):
     try:
-        from django.core.files.storage import FileSystemStorage
-        import os
         booking = SlotBookingMaster.objects.get(slot_booking_id=id)
         file_obj = request.FILES.get('file')
         if not file_obj:
             return Response({'Success': False, 'Message': 'File missing'}, status=status.HTTP_400_BAD_REQUEST)
-        fs = FileSystemStorage()
-        filename = fs.save(file_obj.name, file_obj)
-        extension = os.path.splitext(filename)[1]
+
+        filename, err = secure_save_file(file_obj, subfolder='prescriptions')
+        if err:
+            return Response({'Success': False, 'Message': err}, status=status.HTTP_400_BAD_REQUEST)
         
         if booking.prescription_filename:
             new_val = booking.prescription_filename + "," + filename
@@ -580,28 +691,28 @@ def upload_prescription_file(request, id):
     except SlotBookingMaster.DoesNotExist:
         return Response({'Success': False, 'Message': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
-        return Response({'Success': False, 'Message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'Success': False, 'Message': 'Upload failed.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def upload_image_file(request, id):
     try:
-        from django.core.files.storage import FileSystemStorage
-        import os
         booking = SlotBookingMaster.objects.get(slot_booking_id=id)
         file_obj = request.FILES.get('file')
         if not file_obj:
             return Response({'Success': False, 'Message': 'File missing'}, status=status.HTTP_400_BAD_REQUEST)
-        fs = FileSystemStorage()
-        filename = fs.save(file_obj.name, file_obj)
         
+        filename, err = secure_save_file(file_obj, subfolder='images')
+        if err:
+            return Response({'Success': False, 'Message': err}, status=status.HTTP_400_BAD_REQUEST)
+
         booking.upload_or_click_photo = filename
         booking.save()
         return Response({'Success': True, 'Message': 'Image uploaded successfully', 'filename': filename}, status=status.HTTP_200_OK)
     except SlotBookingMaster.DoesNotExist:
         return Response({'Success': False, 'Message': 'Booking not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
-        return Response({'Success': False, 'Message': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'Success': False, 'Message': 'Upload failed.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST', 'PATCH'])
 @permission_classes([AllowAny])
